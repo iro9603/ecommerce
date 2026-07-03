@@ -1,0 +1,69 @@
+@extends('admin.layouts.app')
+
+@section('contents')
+    <div class="container-xl">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">All Kyc Requests</h3>
+                <div class="card-actions">
+
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-vcenter card-table">
+                        <thead>
+                            <tr>
+                                <th>No.</th>
+                                <th>Name</th>
+                                <th>Date of Birth</th>
+                                <th>Email</th>
+                                <th>Gender</th>
+                                <th>Status</th>
+                                <th class="w-1"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach ($kycRequests as $kycRequest)
+                                <tr>
+                                    <td>{{ $loop->iteration }}</td>
+                                    <td>{{ $kycRequest->full_name }}</td>
+                                    <td class="text-secondary">{{ $kycRequest->date_of_birth }}</td>
+                                    <td class="text-secondary">
+                                        {{ $kycRequest->user?->email ?? 'User unavailable' }}
+                                    </td>
+                                    <td class="text-secondary">{{ $kycRequest->gender }}</td>
+                                    @if ($kycRequest->status == 'pending')
+                                        <td class="text-secondary"><span class="badge bg-warning-lt">pending</span></td>
+                                    @elseif($kycRequest->status == 'approved')
+                                        <td class="text-secondary"><span class="badge bg-success-lt">Approved</span></td>
+                                    @else
+                                        <td class="text-secondary"><span class="badge bg-danger-lt">Rejected</span></td>
+                                    @endif
+                                    <td>
+                                        <a href="{{ route('admin.kyc.show', $kycRequest) }}">View</a>
+                                    </td>
+                                </tr>
+                            @endforeach
+                            {{-- <tr>
+                                <td>Paweł Kuna</td>
+                                <td class="text-secondary">UI Designer, Training</td>
+                                <td class="text-secondary"><a href="#"
+                                        class="text-reset">paweluna@howstuffworks.com</a>
+                                </td>
+                                <td class="text-secondary">User</td>
+                                <td>
+                                    <a href="#">Edit</a>
+                                </td>
+                            </tr> --}}
+
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card-footer">
+                    {{ $kycRequests->links() }}
+                </div>
+            </div>
+        </div>
+    </div>
+@endsection
