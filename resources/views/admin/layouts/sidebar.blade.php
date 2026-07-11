@@ -261,6 +261,13 @@
                             <div class="dropdown-menu-columns">
                                 @if (hasPermission(['Category Management']))
                                     <div class="dropdown-menu-column">
+                                        <a class="dropdown-item" href="{{ route('admin.products.index') }}">
+                                            Products
+                                        </a>
+                                    </div>
+                                @endif
+                                @if (hasPermission(['Category Management']))
+                                    <div class="dropdown-menu-column">
                                         <a class="dropdown-item" href="{{ route('admin.categories.index') }}">
                                             Categories
                                         </a>

@@ -15,6 +15,7 @@ use App\Http\Controllers\Admin\ProfileController;
 use App\Http\Controllers\Admin\RoleController;
 use App\Http\Controllers\Admin\UserRoleController;
 use App\Http\Controllers\Admin\TagController;
+use App\Http\Controllers\Admin\ProductController;
 use App\Http\Controllers\SettingController;
 use Illuminate\Support\Facades\Route;
 
@@ -99,6 +100,14 @@ Route::middleware('auth:admin')
 
         /** Brand Routes */
         Route::resource('/brands', BrandController::class);
+
+        /** Product Routes */
+        Route::get('/products', [ProductController::class, 'index'])->name('products.index');
+        Route::get('/products/physical/create', [ProductController::class, 'create'])->name('products.create');
+        Route::post('/products/{type}/create', [ProductController::class, 'store'])
+            ->whereIn('type', ['physical', 'digital'])
+            ->name('products.store');
+        Route::post('/products/images/upload', [ProductController::class, 'uploadImages'])->name('products.images.upload');
 
         /** Setting routes */
         Route::get('/settings', [SettingController::class, 'index'])->name('settings.index');
