@@ -44,61 +44,172 @@
                         <table class="table table-vcenter table-hover card-table">
                             <thead>
                                 <tr>
-                                    <th class="w-1 text-muted">#</th>
-                                    <th>Role Name</th>
-                                    <th>Permissions</th>
+                                    <th class="w-1 text-muted">Product ID </th>
+                                    <th>Image</th>
+                                    <th>Product Name</th>
+                                    <th>Product Type</th>
+                                    <th>Price</th>
+                                    <th>Stock Status</th>
+                                    <th>Quantity</th>
+                                    <th>Created At</th>
+                                    <th>Status</th>
+                                    <th>Store</th>
                                     <th class="text-end">Actions</th>
                                 </tr>
                             </thead>
 
                             <tbody>
-                                {{--   @foreach ($roles as $role)
+                                @foreach ($products as $product)
                                     <tr>
                                         <td class="text-muted">
-                                            {{ $loop->iteration }}
+                                            <div class="text-muted small">
+                                                {{ $product->id }}
+                                            </div>
+                                        </td>
+
+                                        <td>
+                                            <img style="width:50px" src="{{ asset($product->primaryImage?->path) }}"
+                                                alt="">
                                         </td>
 
                                         <td>
                                             <div class="d-flex align-items-center gap-3">
-                                                <div class="avatar avatar-sm bg-primary-lt text-primary">
-                                                    {{ strtoupper(substr($role->name, 0, 1)) }}
-                                                </div>
 
                                                 <div>
+
                                                     <div class="fw-semibold">
-                                                        {{ $role->name }}
+                                                        <a
+                                                            href="{{ route('admin.products.index') }}">{{ $product->name }}</a>
                                                     </div>
-                                                    <div class="text-muted small">
-                                                        Role ID: {{ $role->id }}
+
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div class="d-flex align-items-center gap-3">
+
+                                                <div>
+
+                                                    <div class="fw-semibold">
+                                                        {{ $product->product_type }}
                                                     </div>
+
+                                                </div>
+
+                                            </div>
+                                        </td>
+                                        <td>
+                                            @if ($product->primaryVariant)
+                                                @if ($product->primaryVariant?->special_price > 0)
+                                                    <div class="fw-semibold">
+                                                        {{ $product->primaryVariant->special_price }}
+
+                                                    </div>
+                                                    <div class="text-danger" style="text-decoration:line-through">
+                                                        {{ $product->primaryVariant?->price }}
+                                                    </div>
+                                                @else
+                                                    {{ $product->primaryVariant?->price }}
+                                                @endif
+                                            @else
+                                                @if ($product->special_price > 0)
+                                                    <div class="fw-semibold">
+                                                        {{ $product->special_price }}
+
+                                                    </div>
+                                                    <div class="text-danger" style="text-decoration:line-through">
+                                                        {{ $product->price }}
+                                                    </div>
+                                                @else
+                                                    {{ $product->price }}
+                                                @endif
+                                            @endif
+                                        </td>
+                                        <td>
+                                            @if ($product->primaryVariant)
+                                                @if ($product->primaryVariant?->in_stock == 1)
+                                                    <small class="text-success">In Stock</small>
+                                                @else
+                                                    <small class="text-danger">Out of Stock</small>
+                                                @endif
+                                            @else
+                                                @if ($product->in_stock == 1)
+                                                    <small class="text-success">In Stock</small>
+                                                @else
+                                                    <small class="text-danger">Out of Stock</small>
+                                                @endif
+                                            @endif
+                                        </td>
+
+                                        <td>
+                                            <div class="d-flex align-items-center gap-3">
+                                                <div>
+                                                    <div class="fw-semibold">
+                                                        @if ($product->primaryVariant)
+                                                            @if ($product->primaryVariant->manage_stock == 1)
+                                                                {{ $product->primaryVariant->qty }}
+                                                            @else
+                                                                ∞
+                                                            @endif
+                                                        @else
+                                                            @if ($product->manage_stock == 'on')
+                                                                {{ $product->qty }}
+                                                            @else
+                                                                ∞
+                                                            @endif
+                                                        @endif
+                                                    </div>
+
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div class="d-flex align-items-center gap-3">
+
+                                                <div>
+
+                                                    <div class="fw-semibold">
+                                                        {{ date('Y-m-d', strtotime($product->created_at)) }}
+                                                    </div>
+
                                                 </div>
                                             </div>
                                         </td>
 
                                         <td>
-                                            <span class="badge bg-primary-lt">
-                                                {{ $role->permissions_count }}
-                                                {{ Str::plural('permission', $role->permissions_count) }}
-                                            </span>
+
+                                            @if ($product->status == 'active')
+                                                <span class="badge bg-success-lt">Active</span>
+                                            @elseif($product->status == 'inactive')
+                                                <span class="badge bg-secondary-lt">Inactive</span>
+                                            @elseif($product->status == 'pending')
+                                                <span class="badge bg-warning-lt">Pending</span>
+                                            @elseif($product->status == 'draft')
+                                                <span class="badge bg-secondary-lt">Draft</span>
+                                            @endif
+
+                                        </td>
+
+                                        <td>
+                                            {{ $product->store->name }}
                                         </td>
 
                                         <td>
                                             <div class="d-flex justify-content-end gap-2">
-                                                @if ($role->name != 'Super Admin')
-                                                    <a href="{{ route('admin.role.edit', $role) }}"
-                                                        class="btn btn-sm btn-outline-primary">
-                                                        Edit
-                                                    </a>
 
-                                                    <a href="{{ route('admin.role.destroy', $role) }}"
-                                                        class="btn btn-sm btn-outline-danger delete-item">
-                                                        Delete
-                                                    </a>
-                                                @endif
+                                                <a href="{{ route('admin.products.edit', $product->id) }}"
+                                                    class="btn btn-sm btn-outline-primary">
+                                                    Edit
+                                                </a>
+
+                                                <a href="" class="btn btn-sm btn-outline-danger delete-item">
+                                                    Delete
+                                                </a>
+
                                             </div>
                                         </td>
                                     </tr>
-                                @endforeach --}}
+                                @endforeach
                             </tbody>
                         </table>
                     </div>
@@ -121,7 +232,7 @@
                         </p>
 
                         <div class="empty-action">
-                            <a href="{{ route('admin.role.create') }}" class="btn btn-primary">
+                            <a href="" class="btn btn-primary">
                                 Create role
                             </a>
                         </div>

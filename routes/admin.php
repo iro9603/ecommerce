@@ -107,7 +107,19 @@ Route::middleware('auth:admin')
         Route::post('/products/{type}/create', [ProductController::class, 'store'])
             ->whereIn('type', ['physical', 'digital'])
             ->name('products.store');
-        Route::post('/products/images/upload', [ProductController::class, 'uploadImages'])->name('products.images.upload');
+        Route::get('/products/physical/{product}/edit', [ProductController::class, 'edit'])->name('products.edit');
+        Route::post('/products/physical/{product}/update', [ProductController::class, 'update'])->name('products.update');
+        Route::post('/products/images/upload/{product}', [ProductController::class, 'uploadImages'])->name('products.images.upload');
+        Route::delete('/products/images/{image}', [ProductController::class, 'destroyImage'])->name('products.images.destroy');
+        Route::post('/products/images/reorder', [ProductController::class, 'imagesReorder'])->name('products.images.reorder');
+
+        /** Product Attributes route */
+        Route::post('/products/attributes/{product}/store', [ProductController::class, 'storeAttributes'])->name('products.attributes.store');
+        Route::delete('/products/{product}/attributes/{attribute}', [ProductController::class, 'destroyAttribute'])
+            ->name('products.attributes.destroy');
+
+        /** Product variant routes */
+        Route::post('/products/variants/{product}/update', [ProductController::class, 'updateVariants'])->name('products.variants.update');
 
         /** Setting routes */
         Route::get('/settings', [SettingController::class, 'index'])->name('settings.index');
