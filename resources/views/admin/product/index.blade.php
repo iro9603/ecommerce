@@ -20,8 +20,10 @@
                         </button>
 
                         <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
-                            <a class="dropdown-item" href="{{ route('admin.products.create') }}">Physical</a>
-                            <a class="dropdown-item" href="#">Digital</a>
+                            <a class="dropdown-item"
+                                href="{{ route('admin.products.create', ['type' => 'physical']) }}">Physical</a>
+                            <a class="dropdown-item"
+                                href="{{ route('admin.products.create', ['type' => 'digital']) }}">Digital</a>
                         </div>
                     </div>
                 </div>
@@ -44,7 +46,7 @@
                         <table class="table table-vcenter table-hover card-table">
                             <thead>
                                 <tr>
-                                    <th class="w-1 text-muted">Product ID </th>
+                                    <th class="w-1 text-muted">#</th>
                                     <th>Image</th>
                                     <th>Product Name</th>
                                     <th>Product Type</th>
@@ -62,9 +64,7 @@
                                 @foreach ($products as $product)
                                     <tr>
                                         <td class="text-muted">
-                                            <div class="text-muted small">
-                                                {{ $product->id }}
-                                            </div>
+                                            {{ $loop->iteration }}
                                         </td>
 
                                         <td>
@@ -196,11 +196,18 @@
 
                                         <td>
                                             <div class="d-flex justify-content-end gap-2">
+                                                @if ($product->product_type == 'physical')
+                                                    <a href="{{ route('admin.products.edit', $product->id) }}"
+                                                        class="btn btn-sm btn-outline-primary">
+                                                        Edit
+                                                    </a>
+                                                @else
+                                                    <a href="{{ route('admin.digital-products.edit', $product->id) }}"
+                                                        class="btn btn-sm btn-outline-primary">
+                                                        Edit
+                                                    </a>
+                                                @endif
 
-                                                <a href="{{ route('admin.products.edit', $product->id) }}"
-                                                    class="btn btn-sm btn-outline-primary">
-                                                    Edit
-                                                </a>
 
                                                 <a href="" class="btn btn-sm btn-outline-danger delete-item">
                                                     Delete

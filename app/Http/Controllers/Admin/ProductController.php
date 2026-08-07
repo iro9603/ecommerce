@@ -27,7 +27,7 @@ class ProductController extends Controller
 
     function index(): View
     {
-        $products = Product::latest()->paginate(30);
+        $products = Product::orderBy('created_at', 'desc')->paginate(30);
         return view('admin.product.index', compact('products'));
     }
 
@@ -43,6 +43,11 @@ class ProductController extends Controller
     function store(ProductStoreRequest $request, string $type)
     {
         $product = DB::transaction(function () use ($request, $type) {
+
+            if (!in_array($type, ['physical', 'digital'])) {
+                abort(404);
+            }
+
             $product = new Product();
             $product->product_type = $type;
             $product->name = $request->name;
@@ -74,12 +79,21 @@ class ProductController extends Controller
             return $product;
         });
 
-        return response()->json([
-            'id' => $product->id,
-            'status' => 'success',
-            'redirect_url' => route('admin.products.edit', $product->id) . '#product-images',
-            'message' => 'Product created successfully.'
-        ]);
+        if ($type == 'physical') {
+            return response()->json([
+                'id' => $product->id,
+                'status' => 'success',
+                'redirect_url' => route('admin.products.edit', $product->id) . '#product-images',
+                'message' => 'Product created successfully.'
+            ]);
+        } else {
+            return response()->json([
+                'id' => $product->id,
+                'status' => 'success',
+                'redirect_url' => route('admin.digital-products.edit', $product->id) . '#product-images',
+                'message' => 'Product created successfully.'
+            ]);
+        }
     }
 
     function edit(int $id)
@@ -95,6 +109,27 @@ class ProductController extends Controller
         $attributesWithValues = $product->attributeWithValues ?? [];
         $variants = $product?->variants ?? [];
         return view('admin.product.edit', compact('stores', 'brands', 'tags', 'categories', 'product', 'productCategoryIds', 'productTagIds', 'attributesWithValues', 'variants'));
+    }
+
+    function editDigital(int $id)
+    {
+        $product = Product::findOrFail($id);
+        if ($product->product_type != 'digital') {
+            abort(404);
+        }
+        $productCategoryIds = $product->categories->pluck('id')->toArray();
+        $productTagIds = $product->tags->pluck('id')->toArray();
+        $stores = Store::select(['name', 'id'])->get();
+        $brands = Brand::select(['name', 'id'])->get();
+        $tags = Tag::select(['name', 'id'])->get();
+        $categories = Category::getNested();
+
+        return view('admin.product.digital-edit', compact('stores', 'brands', 'tags', 'categories', 'product', 'productCategoryIds', 'productTagIds'));
+    }
+
+    function uploadDigitalProductFile(Request $request)
+    {
+        dd($request->all());
     }
 
     function uploadImages(Request $request, Product $product)

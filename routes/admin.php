@@ -103,7 +103,7 @@ Route::middleware('auth:admin')
 
         /** Product Routes */
         Route::get('/products', [ProductController::class, 'index'])->name('products.index');
-        Route::get('/products/physical/create', [ProductController::class, 'create'])->name('products.create');
+        Route::get('/products/{type}/create', [ProductController::class, 'create'])->name('products.create');
         Route::post('/products/{type}/create', [ProductController::class, 'store'])
             ->whereIn('type', ['physical', 'digital'])
             ->name('products.store');
@@ -120,6 +120,10 @@ Route::middleware('auth:admin')
 
         /** Product variant routes */
         Route::post('/products/variants/{product}/update', [ProductController::class, 'updateVariants'])->name('products.variants.update');
+
+        /** Digital product routes */
+        Route::get('/products/digital/{product}/edit', [ProductController::class, 'editDigital'])->name('digital-products.edit');
+        Route::post('/products/digital/file-upload', [ProductController::class, 'uploadDigitalProductFile'])->name('digital-products.file.upload');
 
         /** Setting routes */
         Route::get('/settings', [SettingController::class, 'index'])->name('settings.index');

@@ -1,6 +1,7 @@
 @extends('admin.layouts.app')
 @push('styles')
     <link rel="stylesheet" href="https://unpkg.com/dropzone@5/dist/min/dropzone.min.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@simonwep/pickr/dist/themes/classic.min.css" />
     <style>
         .dropzone {
             border: 2px dashed #ccc;
@@ -83,11 +84,76 @@
                 opacity: 0.6;
             }
         }
+
+        .dz-preview {
+            position: relative;
+            padding: 12px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            background: #f8f8f8;
+            border-radius: 6px;
+            text-align: left;
+            font-family: sans-serif;
+        }
+
+        .dz-filename {
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .dz-progress {
+            height: 6px;
+            background: #e4e4e4;
+            margin-top: 6px;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .dz-upload {
+            background: #28a745;
+            height: 100%;
+            width: 0;
+            transition: width 0.3s ease;
+        }
+
+        .dz-percentage {
+            font-size: 12px;
+            margin-top: 4px;
+            color: #555;
+        }
+
+        .dz-remove {
+            position: absolute;
+            top: 6px;
+            right: 10px;
+            font-size: 18px;
+            color: #dc3545;
+            cursor: pointer;
+        }
+
+        .dz-remove:hover {
+            color: #a71d2a;
+        }
     </style>
 @endpush
 @section('contents')
     <div class="container-xl">
-        <form action="{{ route('admin.products.store', ['type' => 'physical']) }}" method="POST" class="product-form">
+        <div class="page-header d-print-none mb-4">
+            <div class="row align-items-center">
+                <div class="col">
+                    <h2 class="page-title mb-1">Products</h2>
+                    <div class="text-muted">
+                        Update your product information
+                    </div>
+                </div>
+
+                <div class="col-auto ms-auto">
+                    <a class="btn btn-outline-secondary" href="{{ route('admin.products.index') }}">Back</a>
+                </div>
+            </div>
+        </div>
+
+        <form action="" class="product-form">
             @csrf
             <div class="row">
                 <div class="col-md-8">
@@ -127,6 +193,8 @@
 
                     </div>
                     <div class="card ">
+                        <div class="disabled-placeholder" style="{{ count($product->attributes) ? '' : 'display:none' }}">
+                        </div>
                         <div class="card-header">
                             Overview
                         </div>
@@ -222,7 +290,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="card mt-3">
+                    <div class="card mt-3" id="product-images">
                         <div class="card-header">
                             <h3 class="card-title">Product Image</h3>
                         </div>
@@ -238,6 +306,21 @@
                                                     data-image-id="{{ $image->id }}">&times;</span>
                                             </div>
                                         @endforeach
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card mt-3" id="product-images">
+                        <div class="card-header">
+                            <h3 class="card-title">Product Files</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="col-md-12">
+                                <div class="mb-3">
+                                    <div id="fileUploader" class="dropzone"></div>
+                                    <div id="filePreviewContainer" class="file-preview-container">
+
                                     </div>
                                 </div>
                             </div>
@@ -368,7 +451,8 @@
                                     <select name="brand" class="form-control select2" id="">
                                         <option value="">Select a brand</option>
                                         @foreach ($brands as $brand)
-                                            <option value="{{ $brand->id }}">{{ $brand->name }}</option>
+                                            <option value="{{ $brand->id }}" @selected($product->brand_id == $brand->id)>
+                                                {{ $brand->name }}</option>
                                         @endforeach
                                     </select>
                                     <x-input-error :messages="$errors->get('brand')" class="mt-2" />
@@ -385,15 +469,16 @@
                                 <div class="mb-3">
                                     <div>
                                         <label class="form-check">
-                                            <input class="form-check-input" type="checkbox" name="hot">
+                                            <input class="form-check-input" type="checkbox" name="is_hot"
+                                                @checked($product->is_hot)>
                                             <span class="form-check-label">Hot</span>
                                         </label>
                                         <label class="form-check">
-                                            <input class="form-check-input" type="checkbox" name="is_new">
+                                            <input class="form-check-input" type="checkbox" name="is_new"
+                                                @checked($product->is_new)>
                                             <span class="form-check-label">New</span>
                                         </label>
                                     </div>
-                                    {{-- <x-input-error :messages="$errors->get('brand')" class="mt-2" /> --}}
                                 </div>
                             </div>
                         </div>
@@ -407,18 +492,19 @@
                                     <select name="tags[]" class="form-control js-example-basic-multiple" id=""
                                         multiple="multiple">
                                         @foreach ($tags as $tag)
-                                            <option value="{{ $tag->id }}">{{ $tag->name }}</option>
+                                            <option @selected(in_array($tag->id, $productTagIds)) value="{{ $tag->id }}">
+                                                {{ $tag->name }}</option>
                                         @endforeach
                                     </select>
                                     <x-input-error :messages="$errors->get('tags')" class="mt-2" />
                                 </div>
                             </div>
                         </div>
-                        <div class="card mb-3">
+                        <div class="card mb-3" style="position:sticky; top:0;">
                             <div class="card-body">
                                 <div class="col-md-12">
                                     <div class="mb-3 row">
-                                        <button class="btn btn-primary mt-3" type="submit">Create</button>
+                                        <button class="btn btn-primary mt-3" type="submit">Update</button>
                                     </div>
                                 </div>
                             </div>
@@ -432,10 +518,10 @@
 @push('scripts')
     <script src="https://unpkg.com/dropzone@5/dist/min/dropzone.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.7/Sortable.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@simonwep/pickr"></script>
     <script>
         $(document).on('change', '.category-check', function() {
             const isChecked = $(this).is(':checked');
-
 
             $(this).closest('li').find('input.category-check').each(function() {
                 this.checked = isChecked;
@@ -466,6 +552,10 @@
             }
 
             updateParents($(this));
+        });
+
+        $(function() {
+            $('#category-tree input.category-check:checked').trigger('change');
         });
 
         // search logic
@@ -507,13 +597,15 @@
 
                 $.ajax({
                     method: 'POST',
-                    url: form.attr('action'),
+                    url: "{{ route('admin.products.update', ':id') }}".replace(':id',
+                        '{{ $product->id }}'),
                     data: data,
                     contentType: false,
                     processData: false,
 
                     success: function(response) {
-                        console.log(response);
+                        window.location.href = response.redirect_url;
+
                     },
 
                     error: function(xhr) {
@@ -557,6 +649,51 @@
                     $(`#${file.placeholderId}`).remove();
                     addImagePreview(response.path, response.id);
                     this.removeFile(file);
+                });
+            }
+        });
+
+        // file chunking upload
+        const fileUploader = new Dropzone("#fileUploader", {
+            url: "{{ route('admin.digital-products.file.upload') }}",
+            paramName: "file",
+            maxFilesize: 1000,
+            chunking: true,
+            forceChunking: true,
+            chunkSize: 1024 * 1024, // 1MB per Chunk
+            parallelUploads: 1,
+            /* acceptedFiles: "image/*", */
+            addRemoveLinks: false,
+            autoProcessQueue: true,
+            uploadMultiple: false,
+            previewsContainer: `#filePreviewContainer`,
+            previewTemplate: `
+            <div class="dz-preview dz-file-preview">
+            <div class="dz-filename"><span data-dz-name></span></div>
+            <div class="dz-progress"><div class="dz-upload" data-dz-uploadprogress></div></div>
+            <div class="dz-percentage"><span class="progress-text">0</span>% uploaded</div>
+            <div class="dz-remove" data-dz-remove>&times;</div>
+            </div>`,
+            headers: {
+                'X-CSRF-TOKEN': "{{ csrf_token() }}"
+            },
+            init: function() {
+                this.on('uploadprogress', function(file, progress) {
+                    file.previewElement.querySelector(".progress-text").textContent = progress.toFixed(
+                        0);
+                });
+
+                this.on('sending', function(file, xhr, formData) {
+                    formData.append('name', file.upload.filename);
+                });
+
+                this.on('success', function(file, response) {
+                    alert('upload success');
+                });
+
+                this.on('error', function(file, response) {
+                    console.error(response);
+
                 });
             }
         });

@@ -87,7 +87,7 @@
 @endpush
 @section('contents')
     <div class="container-xl">
-        <form action="{{ route('admin.products.store', ['type' => 'physical']) }}" method="POST" class="product-form">
+        <form action="" method="POST" class="product-form">
             @csrf
             <div class="row">
                 <div class="col-md-8">
@@ -490,7 +490,8 @@
 
                 $.ajax({
                     method: 'POST',
-                    url: form.attr('action'),
+                    url: "{{ route('admin.products.store', ['type' => ':type']) }}".replace(
+                        ':type', '{{ request()->type }}'),
                     data: data,
                     contentType: false,
                     processData: false,
