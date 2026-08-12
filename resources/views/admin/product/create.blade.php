@@ -97,14 +97,14 @@
                                 <div class="mb-3">
                                     <label class="form-label required">Name</label>
                                     <input type="text" class="form-control" name="name" placeholder=""
-                                        value="{{ old('name') }}">
+                                        value="{{ old('name') }}" id="name">
                                     <x-input-error :messages="$errors->get('name')" class="mt-2" />
                                 </div>
                             </div>
                             <div class="col-md-12">
                                 <div class="mb-3">
                                     <label class="form-label required">Slug</label>
-                                    <input type="text" class="form-control" name="slug" placeholder=""
+                                    <input type="text" class="form-control" name="slug" id="slug" placeholder=""
                                         value="{{ old('slug') }}">
                                     <x-input-error :messages="$errors->get('slug')" class="mt-2" />
                                 </div>
@@ -598,6 +598,7 @@
                 }
             });
 
+
             function updateImageOrder() {
                 const imageOrder = [];
                 $('.image-preview-item').each(function(index) {
@@ -624,5 +625,21 @@
                 });
             }
         @endisset
+        // slug auto-generate
+        $('#name').on('input', function() {
+            if (!$('#category-id').val()) {
+                $('#slug').val(slugify($(this).val()));
+            }
+        });
+
+        function slugify(text) {
+            return text.toString().toLowerCase()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/\s+/g, '-')
+                .replace(/[^a-z0-9\-]/g, '')
+                .replace(/\-+/g, '-')
+                .replace(/^\-+|\-+$/g, '');
+        }
     </script>
 @endpush

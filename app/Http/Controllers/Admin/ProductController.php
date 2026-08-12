@@ -10,6 +10,7 @@ use App\Models\AttributeValue;
 use App\Models\Brand;
 use App\Models\Category;
 use App\Models\Product;
+use App\Models\ProductFile;
 use App\Models\ProductImage;
 use App\Models\ProductVariant;
 use App\Models\Store;
@@ -18,13 +19,26 @@ use App\Services\AlertService;
 use App\Traits\FileUploadTrait;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\Request;
+use Illuminate\Routing\Controllers\HasMiddleware;
+use Illuminate\Routing\Controllers\Middleware;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Storage;
 
-class ProductController extends Controller
+class ProductController extends Controller implements HasMiddleware
 {
     use FileUploadTrait;
 
+    /* static function Middleware(): array
+    {
+        return [
+            new Middleware('permission:Product Management')
+
+        ];
+    }
+ */
     function index(): View
     {
         $products = Product::orderBy('created_at', 'desc')->paginate(30);
@@ -127,9 +141,211 @@ class ProductController extends Controller
         return view('admin.product.digital-edit', compact('stores', 'brands', 'tags', 'categories', 'product', 'productCategoryIds', 'productTagIds'));
     }
 
-    function uploadDigitalProductFile(Request $request)
+    public function uploadDigitalProductFile(Request $request)
     {
-        dd($request->all());
+        $file = $request->file('file');
+
+        $chunkIndex = (int) $request->dzchunkindex;
+        $totalChunks = (int) $request->dztotalchunkcount;
+        $fileName = basename($request->name);
+
+        $chunkFolder = storage_path('app/private/chunks/' . $fileName);
+
+        if (!File::exists($chunkFolder)) {
+            File::makeDirectory($chunkFolder, 0777, true);
+        }
+
+        $chunkPath = $chunkFolder . '/' . $chunkIndex;
+
+        file_put_contents(
+            $chunkPath,
+            file_get_contents($file->getRealPath())
+        );
+
+        /*
+     * No confiar en que chunkIndex == totalChunks - 1
+     * significa que todos los demás ya llegaron.
+     */
+        $uploadedChunks = glob($chunkFolder . '/*');
+
+        if (count($uploadedChunks) < $totalChunks) {
+            return response()->json([
+                'status' => 'chunk_received',
+                'chunk' => $chunkIndex,
+            ]);
+        }
+
+        // Todos los chunks están presentes.
+        $uploadsFolder = storage_path('app/private/uploads');
+
+        if (!File::exists($uploadsFolder)) {
+            File::makeDirectory($uploadsFolder, 0777, true);
+        }
+
+        $extension = $file->getClientOriginalExtension();
+
+        $storedFileName = \Str::uuid() . '.' . $extension;
+
+        $relativePath = 'uploads/' . $storedFileName;
+
+        $finalPath = storage_path(
+            'app/private/' . $relativePath
+        );
+
+        $output = fopen($finalPath, 'wb');
+
+        for ($i = 0; $i < $totalChunks; $i++) {
+            $chunkFile = $chunkFolder . '/' . $i;
+
+            if (!File::exists($chunkFile)) {
+                fclose($output);
+
+                return response()->json([
+                    'status' => 'error',
+                    'message' => "Missing chunk {$i}",
+                ], 422);
+            }
+
+            $input = fopen($chunkFile, 'rb');
+
+            stream_copy_to_stream($input, $output);
+
+            fclose($input);
+        }
+
+        fclose($output);
+
+        // Elimina chunks + carpeta.
+        File::deleteDirectory($chunkFolder);
+
+        $validationResponse = $this->validateFinalFile($finalPath);
+        if ($validationResponse !== true) {
+            unlink($finalPath);
+            return $validationResponse;
+        }
+
+        $relativePath = 'uploads/' . $storedFileName;
+
+        $productFile = new ProductFile();
+        $productFile->product_id = $request->product_id;
+        $productFile->filename = $fileName;
+        $productFile->path = $relativePath;
+        $productFile->extension = $extension;
+        $productFile->size = filesize($finalPath);
+        $productFile->save();
+
+        return response()->json([
+            'status' => 'success',
+        ]);
+    }
+
+    function validateFinalFile(string $finalPath)
+    {
+        $maxSizeMb = 1000;
+        $maxSizeBytes = $maxSizeMb * 1024 * 1024;
+
+        if (!file_exists($finalPath)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'File not found',
+            ], 404);
+        }
+
+        if (filesize($finalPath) > $maxSizeBytes) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'File size limit exceeded',
+            ], 413);
+        }
+
+        // MIME validation
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mimeType = finfo_file($finfo, $finalPath);
+        finfo_close($finfo);
+
+        $allowedMimeTypes = [
+            'images' => [
+                'image/jpeg',
+                'image/png',
+                'image/gif',
+                'image/webp',
+                'image/avif',
+                'image/bmp',
+                'image/tiff',
+            ],
+
+            'documents' => [
+                'application/pdf',
+                'text/plain',
+                'text/csv',
+                'application/rtf',
+            ],
+
+            'microsoft_office' => [
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            ],
+
+            'open_document' => [
+                'application/vnd.oasis.opendocument.text',
+                'application/vnd.oasis.opendocument.spreadsheet',
+                'application/vnd.oasis.opendocument.presentation',
+            ],
+
+            'ebooks' => [
+                'application/epub+zip',
+            ],
+
+            'audio' => [
+                'audio/mpeg',
+                'audio/wav',
+                'audio/ogg',
+                'audio/flac',
+                'audio/mp4',
+                'audio/aac',
+            ],
+
+            'video' => [
+                'video/mp4',
+                'video/webm',
+                'video/ogg',
+                'video/quicktime',
+            ],
+
+            'archives' => [
+                'application/x-zip-compressed',
+                'application/zip',
+                'application/x-7z-compressed',
+            ],
+        ];
+
+        $allowedMimeTypesFlat = array_merge(...array_values($allowedMimeTypes));
+
+        if (!in_array($mimeType, $allowedMimeTypesFlat, true)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => "Invalid file type: {$mimeType}",
+            ], 400);
+        }
+
+        return true;
+    }
+
+    function destroyDigitalProductFile(int $productId, int $id)
+    {
+        try {
+            $productFile = ProductFile::where('id', $id)->where('product_id', $productId)->first();
+            //delete from storage
+            if (Storage::disk('local')->exists($productFile->path)) {
+                Storage::disk('local')->delete($productFile->path);
+            }
+            $productFile->delete();
+            return response()->json(['status' => 'success', 'message' => 'File deleted successfully']);
+        } catch (\Exception $e) {
+            logger('Failed to delete file: ' . $e);
+            return response()->json(['status' => 'error', 'message' => $e->getMessage()]);
+        }
     }
 
     function uploadImages(Request $request, Product $product)
@@ -174,6 +390,7 @@ class ProductController extends Controller
     {
         $product = Product::findOrFail($id);
         $product->name = $request->name;
+        $product->slug = $request->slug;
         $product->short_description = $request->short_description;
         $product->sku = $request->sku;
         $product->description = $request->content;
@@ -565,5 +782,17 @@ class ProductController extends Controller
                 'attribute_value_id' => $attributeValue->id
             ]);
         }
+    }
+
+    function destroy(Product $product)
+    {
+        if (Auth::user()->hasRole('Super Admin') || hasPermission(['Product Management'])) {
+            $product->delete();
+            notyf()->success('Product deleted successfully');
+            return response()->json(['status' => 'success', 'message' => 'Product deleted successfully']);
+        }
+
+        notyf()->error('You do not have permission to delete this product');
+        return response()->json(['status' => 'error', 'message' => 'You do not have permission to delete this product']);
     }
 }

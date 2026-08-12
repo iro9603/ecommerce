@@ -4,6 +4,7 @@ namespace App\Http\Requests\Admin;
 
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class ProductUpdateRequest extends FormRequest
 {
@@ -17,6 +18,12 @@ class ProductUpdateRequest extends FormRequest
     {
         return [
             'name' => ['required', 'string', 'max:255'],
+            'slug' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('products', 'slug')->ignore($this->route('product')),
+            ],
             'short_description' => ['nullable', 'string', 'max:2000'],
             'content' => ['required', 'string'],
             'sku' => ['nullable', 'string', 'max:255'],

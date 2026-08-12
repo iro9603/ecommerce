@@ -76,11 +76,18 @@
                                             <div class="d-flex align-items-center gap-3">
 
                                                 <div>
+                                                    @if ($product->product_type == 'physical')
+                                                        <div class="fw-semibold">
+                                                            <a
+                                                                href="{{ route('admin.products.edit', $product->id) }}">{{ $product->name }}</a>
+                                                        </div>
+                                                    @else
+                                                        <div class="fw-semibold">
+                                                            <a
+                                                                href="{{ route('admin.digital-products.edit', $product->id) }}">{{ $product->name }}</a>
+                                                        </div>
+                                                    @endif
 
-                                                    <div class="fw-semibold">
-                                                        <a
-                                                            href="{{ route('admin.products.index') }}">{{ $product->name }}</a>
-                                                    </div>
 
                                                 </div>
                                             </div>
@@ -152,7 +159,7 @@
                                                                 ∞
                                                             @endif
                                                         @else
-                                                            @if ($product->manage_stock == 'on')
+                                                            @if ($product->manage_stock == 'yes')
                                                                 {{ $product->qty }}
                                                             @else
                                                                 ∞
@@ -199,18 +206,19 @@
                                                 @if ($product->product_type == 'physical')
                                                     <a href="{{ route('admin.products.edit', $product->id) }}"
                                                         class="btn btn-sm btn-outline-primary">
-                                                        Edit
+                                                        <i class="ti ti-edit fs-3"></i>
                                                     </a>
                                                 @else
                                                     <a href="{{ route('admin.digital-products.edit', $product->id) }}"
                                                         class="btn btn-sm btn-outline-primary">
-                                                        Edit
+                                                        <i class="ti ti-edit fs-3"></i>
                                                     </a>
                                                 @endif
 
 
-                                                <a href="" class="btn btn-sm btn-outline-danger delete-item">
-                                                    Delete
+                                                <a href="{{ route('admin.products.destroy', $product) }}"
+                                                    class="btn btn-sm btn-outline-danger delete-item">
+                                                    <i class="ti ti-trash fs-3"></i>
                                                 </a>
 
                                             </div>

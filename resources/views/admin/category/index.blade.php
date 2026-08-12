@@ -116,11 +116,13 @@
                             <input type="hidden" id="category-id" name="id">
                             <div class="mb-2">
                                 <label for="name" class="form-label">Name <span class="text-danger">*</span></label>
-                                <input type="text" name="name" class="form-control" required id="name" autocomplete="off">
+                                <input type="text" name="name" class="form-control" required id="name"
+                                    autocomplete="off">
                             </div>
                             <div class="mb-2">
                                 <label for="slug" class="form-label">Slug <span class="text-danger">*</span></label>
-                                <input type="text" name="slug" class="form-control" required id="slug" autocomplete="off">
+                                <input type="text" name="slug" class="form-control" required id="slug"
+                                    autocomplete="off">
                             </div>
                             <div class="mb-2">
                                 <label for="parent_id" class="form-label">Parent Category</label>
@@ -206,11 +208,13 @@
                         const categories = Array.isArray(data) ? data : [];
 
                         if (!categories.length) {
-                            $('#category-tree').html('<div class="category-empty-state">No categories yet.</div>');
+                            $('#category-tree').html(
+                                '<div class="category-empty-state">No categories yet.</div>');
                             return;
                         }
 
-                        $('#category-tree').html('<div class="dd" id="nestable-tree">' + renderTree(categories) + '</div>');
+                        $('#category-tree').html('<div class="dd" id="nestable-tree">' + renderTree(
+                            categories) + '</div>');
                         $('#nestable-tree').nestable({
                             maxDepth: maxDepth
                         }).off('change').on('change', function() {
@@ -339,7 +343,9 @@
 
                                 const selected = selectedId == id ? 'selected' : '';
                                 const disabled = depth >= maxDepth ? 'disabled' : '';
-                                options.push(`<option value="${id}" ${selected} ${disabled}>${escapeHtml(prefix + cat.name)}</option>`);
+                                options.push(
+                                    `<option value="${id}" ${selected} ${disabled}>${escapeHtml(prefix + cat.name)}</option>`
+                                    );
 
                                 if (cat.children_nested && cat.children_nested.length) {
                                     addOptions(cat.children_nested, prefix + '-- ', depth + 1);
@@ -416,6 +422,7 @@
                     });
             });
 
+            // slug auto-generate
             $('#name').on('input', function() {
                 if (!$('#category-id').val()) {
                     $('#slug').val(slugify($(this).val()));

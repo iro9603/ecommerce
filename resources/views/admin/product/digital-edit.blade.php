@@ -163,7 +163,7 @@
                                 <div class="mb-3">
                                     <label class="form-label required">Name</label>
                                     <input type="text" class="form-control" name="name" placeholder=""
-                                        value="{{ $product->name }}">
+                                        value="{{ $product->name }}" id="name">
                                     <x-input-error :messages="$errors->get('name')" class="mt-2" />
                                 </div>
                             </div>
@@ -171,7 +171,7 @@
                                 <div class="mb-3">
                                     <label class="form-label required">Slug</label>
                                     <input type="text" class="form-control" name="slug" placeholder=""
-                                        value="{{ $product->slug }}">
+                                        value="{{ $product->slug }}" id="slug">
                                     <x-input-error :messages="$errors->get('slug')" class="mt-2" />
                                 </div>
                             </div>
@@ -320,7 +320,20 @@
                                 <div class="mb-3">
                                     <div id="fileUploader" class="dropzone"></div>
                                     <div id="filePreviewContainer" class="file-preview-container">
-
+                                        @foreach ($product->files ?? [] as $file)
+                                            <div class="dz-preview dz-file-preview">
+                                                <div class="dz-filename"><span data-dz-name>{{ $file->filename }}</span>
+                                                </div>
+                                                <div class="dz-progress">
+                                                    <div class="dz-upload" data-dz-uploadprogress style="width:100%">
+                                                    </div>
+                                                </div>
+                                                <div class="dz-percentage"><span class="progress-text">uploaded
+                                                </div>
+                                                <div class="dz-remove" data-file-id="{{ $file->id }}" data-dz-remove>
+                                                    &times;</div>
+                                            </div>
+                                        @endforeach
                                     </div>
                                 </div>
                             </div>
@@ -657,12 +670,12 @@
         const fileUploader = new Dropzone("#fileUploader", {
             url: "{{ route('admin.digital-products.file.upload') }}",
             paramName: "file",
-            maxFilesize: 1000,
+            maxFilesize: 1024,
             chunking: true,
             forceChunking: true,
             chunkSize: 1024 * 1024, // 1MB per Chunk
             parallelUploads: 1,
-            /* acceptedFiles: "image/*", */
+            /*  acceptedFiles: "image/*, application/pdf, video/*, audio/*, application/zip, application/x-rar-compressed, application/x-zip-compressed", */
             addRemoveLinks: false,
             autoProcessQueue: true,
             uploadMultiple: false,
@@ -685,17 +698,44 @@
 
                 this.on('sending', function(file, xhr, formData) {
                     formData.append('name', file.upload.filename);
+                    formData.append('product_id', "{{ $product->id }}");
                 });
 
                 this.on('success', function(file, response) {
-                    alert('upload success');
+                    window.location.reload();
                 });
 
                 this.on('error', function(file, response) {
                     console.error(response);
-
+                    if (response.status === 'error') {
+                        notyf.error(response.message);
+                    }
                 });
             }
+        });
+
+        $(document).on('click', '.dz-remove', function() {
+            const id = $(this).attr('data-file-id');
+            $.ajax({
+                method: 'DELETE',
+                url: "{{ route('admin.digital-products.file.destroy', [
+                    'product' => $product->id,
+                    'file' => ':fileId',
+                ]) }}"
+                    .replace(':fileId', id),
+                headers: {
+                    'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                },
+                success: function(response) {
+                    window.location.reload();
+
+                },
+                error: function(xhr, status, error) {
+                    console.log(xhr);
+
+
+                }
+            });
         });
 
         function addUploadPlaceholder(placeholderId) {
@@ -772,6 +812,22 @@
 
                 }
             });
+        }
+        // slug auto-generate
+        $('#name').on('input', function() {
+
+            $('#slug').val(slugify($(this).val()));
+
+        });
+
+        function slugify(text) {
+            return text.toString().toLowerCase()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/\s+/g, '-')
+                .replace(/[^a-z0-9\-]/g, '')
+                .replace(/\-+/g, '-')
+                .replace(/^\-+|\-+$/g, '');
         }
     </script>
 @endpush

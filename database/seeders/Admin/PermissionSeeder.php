@@ -49,6 +49,12 @@ class PermissionSeeder extends Seeder
                 'guard_name' => 'admin',
                 'group_name' => 'Product Brands',
             ],
+
+            [
+                'name' => 'Product Management',
+                'guard_name' => 'admin',
+                'group_name' => 'Products',
+            ],
         ];
 
         foreach ($permissions as $permission) {
