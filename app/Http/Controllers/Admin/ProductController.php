@@ -31,14 +31,14 @@ class ProductController extends Controller implements HasMiddleware
 {
     use FileUploadTrait;
 
-    /* static function Middleware(): array
+    static function Middleware(): array
     {
         return [
             new Middleware('permission:Product Management')
 
         ];
     }
- */
+
     function index(): View
     {
         $products = Product::orderBy('created_at', 'desc')->paginate(30);
