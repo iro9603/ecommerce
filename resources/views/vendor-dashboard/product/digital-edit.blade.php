@@ -1,6 +1,7 @@
-@extends('admin.layouts.app')
+@extends('vendor-dashboard.layouts.app')
 @push('styles')
     <link rel="stylesheet" href="https://unpkg.com/dropzone@5/dist/min/dropzone.min.css" type="text/css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@simonwep/pickr/dist/themes/classic.min.css" />
     <style>
         .dropzone {
             border: 2px dashed #ccc;
@@ -83,8 +84,58 @@
                 opacity: 0.6;
             }
         }
+
+        .dz-preview {
+            position: relative;
+            padding: 12px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            background: #f8f8f8;
+            border-radius: 6px;
+            text-align: left;
+            font-family: sans-serif;
+        }
+
+        .dz-filename {
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .dz-progress {
+            height: 6px;
+            background: #e4e4e4;
+            margin-top: 6px;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .dz-upload {
+            background: #28a745;
+            height: 100%;
+            width: 0;
+            transition: width 0.3s ease;
+        }
+
+        .dz-percentage {
+            font-size: 12px;
+            margin-top: 4px;
+            color: #555;
+        }
+
+        .dz-remove {
+            position: absolute;
+            top: 6px;
+            right: 10px;
+            font-size: 18px;
+            color: #dc3545;
+            cursor: pointer;
+        }
+
+        .dz-remove:hover {
+            color: #a71d2a;
+        }
     </style>
-    @include('admin.product.partials.form-visuals')
+    @include('vendor-dashboard.product.partials.form-visuals')
 @endpush
 @section('contents')
     <div class="container-xl product-editor">
@@ -92,24 +143,25 @@
             <div class="row align-items-center">
                 <div class="col">
                     <div class="product-page-heading">
-                        <span class="product-page-icon" aria-hidden="true"><i class="ti ti-package"></i></span>
+                        <span class="product-page-icon" aria-hidden="true"><i class="ti ti-cloud-download"></i></span>
                         <div>
-                            <div class="product-eyebrow">Catalog / Physical product</div>
-                            <h2 class="page-title mb-0">Create a new product</h2>
-                            <div class="product-page-description">Add the essential details, pricing, inventory and
-                                organization for your product.</div>
+                            <div class="product-eyebrow">Catalog / Digital product</div>
+                            <h2 class="page-title mb-0">Edit digital product</h2>
+                            <div class="product-page-description">Update the product details, downloadable files, pricing
+                                and visibility.</div>
                         </div>
                     </div>
                 </div>
+
                 <div class="col-auto ms-auto">
-                    <a class="btn btn-outline-secondary product-back-btn" href="{{ route('admin.products.index') }}">
+                    <a class="btn btn-outline-secondary product-back-btn" href="{{ route('vendor.products.index') }}">
                         <i class="ti ti-arrow-left" aria-hidden="true"></i><span>Back to products</span>
                     </a>
                 </div>
             </div>
         </div>
 
-        <form action="" method="POST" class="product-form">
+        <form action="" class="product-form">
             @csrf
             <div class="row align-items-start">
                 <div class="col-lg-8">
@@ -120,8 +172,8 @@
                                         class="ti ti-file-description"></i></span>
                                 <div>
                                     <h3 class="product-section-title">Basic information</h3>
-                                    <p class="product-section-description">Give customers a clear description of the
-                                        product.</p>
+                                    <p class="product-section-description">Keep the storefront copy clear, useful and up to
+                                        date.</p>
                                 </div>
                             </div>
                         </div>
@@ -130,29 +182,29 @@
                                 <div class="mb-3">
                                     <label class="form-label required">Name</label>
                                     <input type="text" class="form-control" name="name" placeholder=""
-                                        value="{{ old('name') }}" id="name">
+                                        value="{{ $product->name }}" id="name">
                                     <x-input-error :messages="$errors->get('name')" class="mt-2" />
                                 </div>
                             </div>
                             <div class="col-md-12">
                                 <div class="mb-3">
                                     <label class="form-label required">Slug</label>
-                                    <input type="text" class="form-control" name="slug" id="slug" placeholder=""
-                                        value="{{ old('slug') }}">
+                                    <input type="text" class="form-control" name="slug" placeholder=""
+                                        value="{{ $product->slug }}" id="slug">
                                     <x-input-error :messages="$errors->get('slug')" class="mt-2" />
                                 </div>
                             </div>
                             <div class="col-md-12">
                                 <div class="mb-3">
                                     <label class="form-label required">Short Description</label>
-                                    <textarea name="short_description" id="short-editor" cols="30" rows="10"></textarea>
+                                    <textarea name="short_description" id="short-editor" cols="30" rows="10">{!! $product->short_description !!}</textarea>
                                     <x-input-error :messages="$errors->get('short_description')" class="mt-2" />
                                 </div>
                             </div>
                             <div class="col-md-12">
                                 <div class="mb-3">
                                     <label class="form-label required">Content</label>
-                                    <textarea name="content" id="editor" cols="30" rows="10"></textarea>
+                                    <textarea name="content" id="editor" cols="30" rows="10">{!! $product->description !!}</textarea>
                                     <x-input-error :messages="$errors->get('content')" class="mt-2" />
                                 </div>
                             </div>
@@ -160,13 +212,15 @@
 
                     </div>
                     <div class="card">
+                        <div class="disabled-placeholder" style="{{ count($product->attributes) ? '' : 'display:none' }}">
+                        </div>
                         <div class="card-header">
                             <div class="product-section-heading">
                                 <span class="product-section-icon" aria-hidden="true"><i
                                         class="ti ti-receipt-dollar"></i></span>
                                 <div>
                                     <h3 class="product-section-title">Pricing &amp; inventory</h3>
-                                    <p class="product-section-description">Set prices, promotions and current stock
+                                    <p class="product-section-description">Review pricing, offer dates and product
                                         availability.</p>
                                 </div>
                             </div>
@@ -176,21 +230,24 @@
                                 <div class="col-md-4">
                                     <div class="mb-3">
                                         <label for="form-label">SKU</label>
-                                        <input type="text" class="form-control" name="sku" value="">
+                                        <input type="text" class="form-control" name="sku"
+                                            value="{{ $product->sku }}">
                                         <x-input-error :messages="$errors->get('sku')" class="mt-2" />
                                     </div>
                                 </div>
                                 <div class="col-md-4">
                                     <div class="mb-3">
                                         <label for="form-label">Price</label>
-                                        <input type="text" class="form-control" name="price" value="">
+                                        <input type="text" class="form-control" name="price"
+                                            value="{{ $product->price }}">
                                         <x-input-error :messages="$errors->get('price')" class="mt-2" />
                                     </div>
                                 </div>
                                 <div class="col-md-4">
                                     <div class="mb-3">
                                         <label for="form-label">Special Price</label>
-                                        <input type="text" class="form-control" name="special_price" value="">
+                                        <input type="text" class="form-control" name="special_price"
+                                            value="{{ $product->special_price }}">
                                         <x-input-error :messages="$errors->get('special_price')" class="mt-2" />
                                     </div>
                                 </div>
@@ -198,7 +255,7 @@
                                     <div class="mb-3">
                                         <label for="form-label">From Date</label>
                                         <input type="text" class="form-control selector-from" name="from_date"
-                                            value="" id="datepicker-icon-prepend">
+                                            value="{{ $product->special_price_start }}" id="datepicker-icon-prepend">
                                         <x-input-error :messages="$errors->get('from_date')" class="mt-2" />
                                     </div>
 
@@ -207,7 +264,7 @@
                                     <div class="mb-3">
                                         <label for="form-label">To Date</label>
                                         <input type="text" class="form-control selector-to" name="to_date"
-                                            value="">
+                                            value="{{ $product->special_price_end }}">
                                         <x-input-error :messages="$errors->get('to_date')" class="mt-2" />
                                     </div>
                                 </div>
@@ -216,15 +273,17 @@
                                         <div class="mb-3">
                                             <label class="form-check">
                                                 <input class="form-check-input manage-stock-check" type="checkbox"
-                                                    name="manage_stock">
+                                                    name="manage_stock" @checked($product->manage_stock == 'yes')>
                                                 <span class="form-check-label">Manage Stock</span>
                                             </label>
                                         </div>
                                     </div>
-                                    <div class="col-md-12 manage-stock d-none">
+                                    <div
+                                        class="col-md-12 manage-stock {{ $product->manage_stock == 'yes' ? '' : ' d-none' }}">
                                         <div class="mb-3">
                                             <label for="form-label">Quantity</label>
-                                            <input type="text" class="form-control" name="quantity" value="">
+                                            <input type="text" class="form-control" name="quantity"
+                                                value="{{ $product->qty }}">
                                             <x-input-error :messages="$errors->get('quantity')" class="mt-2" />
                                         </div>
                                     </div>
@@ -239,12 +298,14 @@
                                                 <div class="stock-status-options">
                                                     <label class="form-check">
                                                         <input class="form-check-input" type="radio"
-                                                            name="stock_status" checked="" value="in_stock">
+                                                            name="stock_status" @checked($product->in_stock == 1)
+                                                            value="in_stock">
                                                         <span class="form-check-label">In stock</span>
                                                     </label>
                                                     <label class="form-check">
                                                         <input class="form-check-input" type="radio"
-                                                            name="stock_status" checked="" value="out_of_stock">
+                                                            name="stock_status" @checked($product->in_stock == 0)
+                                                            value="out_of_stock">
                                                         <span class="form-check-label">Out of stock</span>
                                                     </label>
                                                 </div>
@@ -256,22 +317,55 @@
                             </div>
                         </div>
                     </div>
-                    @isset($product)
-                        <div class="card mt-3">
-                            <div class="card-header">
-                                <h3 class="card-title">Product Image</h3>
-                            </div>
-                            <div class="card-body">
-                                <div class="col-md-12">
-                                    <div class="mb-3">
-                                        <div id="imageUploader" class="dropzone"></div>
-                                        <div id="imagePreviewContainer" class="image-preview-container">
-                                        </div>
+                    <div class="card mt-3" id="product-images">
+                        <div class="card-header">
+                            <h3 class="card-title">Product Image</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="col-md-12">
+                                <div class="mb-3">
+                                    <div id="imageUploader" class="dropzone"></div>
+                                    <div id="imagePreviewContainer" class="image-preview-container">
+                                        @foreach ($product?->images ?? [] as $image)
+                                            <div class = "image-preview-item" data-image-id = "{{ $image->id }}">
+                                                <img src = "{{ asset($image->path) }}">
+                                                <span class="remove-image"
+                                                    data-image-id="{{ $image->id }}">&times;</span>
+                                            </div>
+                                        @endforeach
                                     </div>
                                 </div>
                             </div>
                         </div>
-                    @endisset
+                    </div>
+                    <div class="card mt-3" id="product-images">
+                        <div class="card-header">
+                            <h3 class="card-title">Product Files</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="col-md-12">
+                                <div class="mb-3">
+                                    <div id="fileUploader" class="dropzone"></div>
+                                    <div id="filePreviewContainer" class="file-preview-container">
+                                        @foreach ($product->files ?? [] as $file)
+                                            <div class="dz-preview dz-file-preview">
+                                                <div class="dz-filename"><span data-dz-name>{{ $file->filename }}</span>
+                                                </div>
+                                                <div class="dz-progress">
+                                                    <div class="dz-upload" data-dz-uploadprogress style="width:100%">
+                                                    </div>
+                                                </div>
+                                                <div class="dz-percentage"><span class="progress-text">uploaded
+                                                </div>
+                                                <div class="dz-remove" data-file-id="{{ $file->id }}" data-dz-remove>
+                                                    &times;</div>
+                                            </div>
+                                        @endforeach
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <div class="col-lg-4 product-sidebar">
                     <div class="card mb-3">
@@ -282,34 +376,17 @@
                             <div class="col-md-12">
                                 <div class="mb-3">
                                     <select name="status" class="form-control" id="">
-                                        <option value="active">Active</option>
-                                        <option value="inactive">Inactive</option>
-                                        <option value="draft">Draft</option>
-
+                                        <option @selected($product->status == 'active') value="active">Active</option>
+                                        <option @selected($product->status == 'inactive') value="inactive">Inactive</option>
+                                        <option @selected($product->status == 'draft') value="draft">Draft</option>
+                                        <option @selected($product->status == 'pending') value="pending">Pending</option>
                                     </select>
                                     <x-input-error :messages="$errors->get('status')" class="mt-2" />
                                 </div>
                             </div>
                         </div>
                     </div>
-                    <div class="card mb-3">
-                        <div class="card-header">
-                            <h3 class="card-title">Store</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="col-md-12">
-                                <div class="mb-3">
-                                    <select name="store" class="form-control select2" id="">
-                                        <option value="">Select a store</option>
-                                        @foreach ($stores as $store)
-                                            <option value="{{ $store->id }}">{{ $store->name }}</option>
-                                        @endforeach
-                                    </select>
-                                    <x-input-error :messages="$errors->get('store')" class="mt-2" />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+
                     <div class="card mb-3">
                         <div class="card-header">
                             <h3 class="card-title">Is Featured</h3>
@@ -318,7 +395,8 @@
                             <div class="col-md-12">
                                 <div class="mb-3">
                                     <label class="form-check form-switch form-switch-3">
-                                        <input class="form-check-input" type="checkbox" name="is_featured">
+                                        <input class="form-check-input" @checked($product->is_featured == 1) type="checkbox"
+                                            name="is_featured">
                                         <span class="form-check-label">Enable</span>
                                     </label>
                                     <x-input-error :messages="$errors->get('is_featured')" class="mt-2" />
@@ -339,7 +417,8 @@
                                             <li>
                                                 <label for="" class="form-check category-wrapper">
                                                     <input type="checkbox" class="form-check-input category-check"
-                                                        name="categories[]" value="{{ $category->id }}">
+                                                        name="categories[]" value="{{ $category->id }}"
+                                                        @checked(in_array($category->id, $productCategoryIds))>
                                                     <span
                                                         class="form-check-label category-label">{{ $category->name }}</span>
                                                 </label>
@@ -350,7 +429,8 @@
                                                                 <label for="" class="form-check category-wrapper">
                                                                     <input type="checkbox"
                                                                         class="form-check-input category-check"
-                                                                        name="categories[]" value="{{ $child->id }}">
+                                                                        name="categories[]" value="{{ $child->id }}"
+                                                                        @checked(in_array($child->id, $productCategoryIds))>
                                                                     <span
                                                                         class="form-check-label category-label">{{ $child->name }}</span>
                                                                 </label>
@@ -363,7 +443,8 @@
                                                                                     <input type="checkbox"
                                                                                         class="form-check-input category-check"
                                                                                         name="categories[]"
-                                                                                        value="{{ $subChild->id }}">
+                                                                                        value="{{ $subChild->id }}"
+                                                                                        @checked(in_array($subChild->id, $productCategoryIds))>
                                                                                     <span
                                                                                         class="form-check-label category-label">{{ $subChild->name }}</span>
                                                                                 </label>
@@ -392,7 +473,8 @@
                                     <select name="brand" class="form-control select2" id="">
                                         <option value="">Select a brand</option>
                                         @foreach ($brands as $brand)
-                                            <option value="{{ $brand->id }}">{{ $brand->name }}</option>
+                                            <option value="{{ $brand->id }}" @selected($product->brand_id == $brand->id)>
+                                                {{ $brand->name }}</option>
                                         @endforeach
                                     </select>
                                     <x-input-error :messages="$errors->get('brand')" class="mt-2" />
@@ -409,15 +491,16 @@
                                 <div class="mb-3">
                                     <div class="product-label-options">
                                         <label class="form-check">
-                                            <input class="form-check-input" type="checkbox" name="is_hot">
+                                            <input class="form-check-input" type="checkbox" name="is_hot"
+                                                @checked($product->is_hot)>
                                             <span class="form-check-label">Hot</span>
                                         </label>
                                         <label class="form-check">
-                                            <input class="form-check-input" type="checkbox" name="is_new">
+                                            <input class="form-check-input" type="checkbox" name="is_new"
+                                                @checked($product->is_new)>
                                             <span class="form-check-label">New</span>
                                         </label>
                                     </div>
-                                    {{-- <x-input-error :messages="$errors->get('brand')" class="mt-2" /> --}}
                                 </div>
                             </div>
                         </div>
@@ -431,7 +514,8 @@
                                     <select name="tags[]" class="form-control js-example-basic-multiple" id=""
                                         multiple="multiple">
                                         @foreach ($tags as $tag)
-                                            <option value="{{ $tag->id }}">{{ $tag->name }}</option>
+                                            <option @selected(in_array($tag->id, $productTagIds)) value="{{ $tag->id }}">
+                                                {{ $tag->name }}</option>
                                         @endforeach
                                     </select>
                                     <x-input-error :messages="$errors->get('tags')" class="mt-2" />
@@ -444,7 +528,7 @@
                             <div class="col-md-12">
                                 <div class="mb-3 row">
                                     <button class="btn btn-primary mt-3 product-submit-btn" type="submit">
-                                        <i class="ti ti-plus" aria-hidden="true"></i> Create product
+                                        <i class="ti ti-device-floppy" aria-hidden="true"></i> Save changes
                                     </button>
                                 </div>
                             </div>
@@ -458,10 +542,10 @@
 @push('scripts')
     <script src="https://unpkg.com/dropzone@5/dist/min/dropzone.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.7/Sortable.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@simonwep/pickr"></script>
     <script>
         $(document).on('change', '.category-check', function() {
             const isChecked = $(this).is(':checked');
-
 
             $(this).closest('li').find('input.category-check').each(function() {
                 this.checked = isChecked;
@@ -492,6 +576,10 @@
             }
 
             updateParents($(this));
+        });
+
+        $(function() {
+            $('#category-tree input.category-check:checked').trigger('change');
         });
 
         // search logic
@@ -528,21 +616,20 @@
             $('.product-form').on('submit', function(e) {
                 e.preventDefault();
 
-                let form = $(this);
-                let data = new FormData(this);
+                const form = $(this);
+                const data = new FormData(this);
 
                 $.ajax({
                     method: 'POST',
-                    url: "{{ route('admin.products.store', ['type' => ':type']) }}".replace(
-                        ':type', '{{ request()->type }}'),
+                    url: "{{ route('vendor.products.update', ':id') }}".replace(':id',
+                        '{{ $product->id }}'),
                     data: data,
                     contentType: false,
                     processData: false,
 
                     success: function(response) {
-                        if (response.status == 'success') {
-                            window.location.href = response.redirect_url;
-                        }
+                        window.location.href = response.redirect_url;
+
                     },
 
                     error: function(xhr) {
@@ -561,118 +648,187 @@
             });
         });
 
-        @isset($product)
-            // dropzone image upload
-            Dropzone.autoDiscover = false;
-            const imageUploader = new Dropzone("#imageUploader", {
-                url: "{{ route('admin.products.images.upload', ':id') }}".replace(':id', '{{ $product->id }}'),
-                paramName: "image",
-                maxFilesize: 10,
-                acceptedFiles: "image/*",
-                addRemoveLinks: false,
-                autoProcessQueue: true,
-                uploadMultiple: false,
-                previewsContainer: false,
-                headers: {
-                    'X-CSRF-TOKEN': "{{ csrf_token() }}"
-                },
-                init: function() {
-                    this.on('addedfile', function(file) {
-                        const placeholderId = 'upload-' + Date.now();
-                        addUploadPlaceholder(placeholderId);
-                        file.placeholderId = placeholderId;
-                    });
+        // dropzone image upload
+        Dropzone.autoDiscover = false;
+        const imageUploader = new Dropzone("#imageUploader", {
+            url: "{{ route('vendor.products.images.upload', ':id') }}".replace(':id', '{{ $product->id }}'),
+            paramName: "image",
+            maxFilesize: 10,
+            acceptedFiles: "image/*",
+            addRemoveLinks: false,
+            autoProcessQueue: true,
+            uploadMultiple: false,
+            previewsContainer: false,
+            headers: {
+                'X-CSRF-TOKEN': "{{ csrf_token() }}"
+            },
+            init: function() {
+                this.on('addedfile', function(file) {
+                    const placeholderId = 'upload-' + Date.now();
+                    addUploadPlaceholder(placeholderId);
+                    file.placeholderId = placeholderId;
+                });
 
-                    this.on('success', function(file, response) {
-                        $(`#${file.placeholderId}`).remove();
-                        addImagePreview(response.path, response.id);
-                        this.removeFile(file);
-                    });
+                this.on('success', function(file, response) {
+                    $(`#${file.placeholderId}`).remove();
+                    addImagePreview(response.path, response.id);
+                    this.removeFile(file);
+                });
+            }
+        });
+
+        // file chunking upload
+        const fileUploader = new Dropzone("#fileUploader", {
+            url: "{{ route('vendor.digital-products.file.upload') }}",
+            paramName: "file",
+            maxFilesize: 1024,
+            chunking: true,
+            forceChunking: true,
+            chunkSize: 1024 * 1024, // 1MB per Chunk
+            parallelUploads: 1,
+            /*  acceptedFiles: "image/*, application/pdf, video/*, audio/*, application/zip, application/x-rar-compressed, application/x-zip-compressed", */
+            addRemoveLinks: false,
+            autoProcessQueue: true,
+            uploadMultiple: false,
+            previewsContainer: `#filePreviewContainer`,
+            previewTemplate: `
+            <div class="dz-preview dz-file-preview">
+            <div class="dz-filename"><span data-dz-name></span></div>
+            <div class="dz-progress"><div class="dz-upload" data-dz-uploadprogress></div></div>
+            <div class="dz-percentage"><span class="progress-text">0</span>% uploaded</div>
+            <div class="dz-remove" data-dz-remove>&times;</div>
+            </div>`,
+            headers: {
+                'X-CSRF-TOKEN': "{{ csrf_token() }}"
+            },
+            init: function() {
+                this.on('uploadprogress', function(file, progress) {
+                    file.previewElement.querySelector(".progress-text").textContent = progress.toFixed(
+                        0);
+                });
+
+                this.on('sending', function(file, xhr, formData) {
+                    formData.append('name', file.upload.filename);
+                    formData.append('product_id', "{{ $product->id }}");
+                });
+
+                this.on('success', function(file, response) {
+                    window.location.reload();
+                });
+
+                this.on('error', function(file, response) {
+                    console.error(response);
+                    if (response.status === 'error') {
+                        notyf.error(response.message);
+                    }
+                });
+            }
+        });
+
+        $(document).on('click', '.dz-remove', function() {
+            const id = $(this).attr('data-file-id');
+            $.ajax({
+                method: 'DELETE',
+                url: "{{ route('vendor.digital-products.file.destroy', [
+                    'product' => $product->id,
+                    'file' => ':fileId',
+                ]) }}"
+                    .replace(':fileId', id),
+                headers: {
+                    'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                },
+                success: function(response) {
+                    window.location.reload();
+
+                },
+                error: function(xhr, status, error) {
+                    console.log(xhr);
+
+
                 }
             });
+        });
 
-            function addUploadPlaceholder(placeholderId) {
-                const placeholderHtml = `
+        function addUploadPlaceholder(placeholderId) {
+            const placeholderHtml = `
             <div id="${ placeholderId }" class = "image-preview-item">
                 <div class="image-preview-loader"></div>
             </div>
             `;
 
-                $('#imagePreviewContainer').append(placeholderHtml);
-            }
+            $('#imagePreviewContainer').append(placeholderHtml);
+        }
 
-            function addImagePreview(path, id) {
-                const placeholderHtml = `
+        function addImagePreview(path, id) {
+            const placeholderHtml = `
             <div class = "image-preview-item" data-image-id = "${id}">
                 <img src = "${path}">
                 <span class="remove-image" data-image-id="${id}">&times;</span>
             </div>
             `;
 
-                $('#imagePreviewContainer').append(placeholderHtml);
-            }
+            $('#imagePreviewContainer').append(placeholderHtml);
+        }
 
-            $(document).on('click', '.remove-image', function() {
-                const imageId = $(this).attr('data-image-id');
-                const element = this;
-                $.ajax({
-                    method: 'DELETE',
-                    url: "{{ route('admin.products.images.destroy', ':id') }}".replace(':id', imageId),
-                    headers: {
-                        'X-CSRF-TOKEN': '{{ csrf_token() }}'
-                    },
-                    success: function(response) {
-                        notyf.success(response.message);
-                        $(element).closest('.image-preview-item').remove();
-                    },
-                    error: function(xhr, status, error) {
-                        notyf.error(error);
-                    }
-                });
-
-            });
-
-            // Init sortable
-            const imagePreviewContainer = document.getElementById('imagePreviewContainer');
-            new Sortable(imagePreviewContainer, {
-                animation: 150,
-                onEnd: function() {
-                    updateImageOrder();
+        $(document).on('click', '.remove-image', function() {
+            const imageId = $(this).attr('data-image-id');
+            const element = this;
+            $.ajax({
+                method: 'DELETE',
+                url: "{{ route('vendor.products.images.destroy', ':id') }}".replace(':id', imageId),
+                headers: {
+                    'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                },
+                success: function(response) {
+                    notyf.success(response.message);
+                    $(element).closest('.image-preview-item').remove();
+                },
+                error: function(xhr, status, error) {
+                    notyf.error(error);
                 }
             });
 
+        });
 
-            function updateImageOrder() {
-                const imageOrder = [];
-                $('.image-preview-item').each(function(index) {
-                    imageOrder.push({
-                        id: $(this).data('image-id'),
-                        order: index
-                    });
-                });
-                $.ajax({
-                    url: "{{ route('admin.products.images.reorder') }}",
-                    method: 'POST',
-                    headers: {
-                        'X-CSRF-TOKEN': "{{ csrf_token() }}"
-                    },
-                    data: {
-                        images: imageOrder
-                    },
-                    success: function(response) {
-
-                    },
-                    error: function(xhr, status, error) {
-
-                    }
-                });
+        // Init sortable
+        const imagePreviewContainer = document.getElementById('imagePreviewContainer');
+        new Sortable(imagePreviewContainer, {
+            animation: 150,
+            onEnd: function() {
+                updateImageOrder();
             }
-        @endisset
+        });
+
+        function updateImageOrder() {
+            const imageOrder = [];
+            $('.image-preview-item').each(function(index) {
+                imageOrder.push({
+                    id: $(this).data('image-id'),
+                    order: index
+                });
+            });
+            $.ajax({
+                url: "{{ route('vendor.products.images.reorder') }}",
+                method: 'POST',
+                headers: {
+                    'X-CSRF-TOKEN': "{{ csrf_token() }}"
+                },
+                data: {
+                    images: imageOrder
+                },
+                success: function(response) {
+
+                },
+                error: function(xhr, status, error) {
+
+                }
+            });
+        }
         // slug auto-generate
         $('#name').on('input', function() {
-            if (!$('#category-id').val()) {
-                $('#slug').val(slugify($(this).val()));
-            }
+
+            $('#slug').val(slugify($(this).val()));
+
         });
 
         function slugify(text) {

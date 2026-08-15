@@ -135,29 +135,48 @@
             color: #a71d2a;
         }
     </style>
+    @include('admin.product.partials.form-visuals')
 @endpush
 @section('contents')
-    <div class="container-xl">
-        <div class="page-header d-print-none mb-4">
+    <div class="container-xl product-editor">
+        <div class="page-header product-page-header d-print-none mb-4">
             <div class="row align-items-center">
                 <div class="col">
-                    <h2 class="page-title mb-1">Products</h2>
-                    <div class="text-muted">
-                        Update your product information
+                    <div class="product-page-heading">
+                        <span class="product-page-icon" aria-hidden="true"><i class="ti ti-cloud-download"></i></span>
+                        <div>
+                            <div class="product-eyebrow">Catalog / Digital product</div>
+                            <h2 class="page-title mb-0">Edit digital product</h2>
+                            <div class="product-page-description">Update the product details, downloadable files, pricing
+                                and visibility.</div>
+                        </div>
                     </div>
                 </div>
 
                 <div class="col-auto ms-auto">
-                    <a class="btn btn-outline-secondary" href="{{ route('admin.products.index') }}">Back</a>
+                    <a class="btn btn-outline-secondary product-back-btn" href="{{ route('admin.products.index') }}">
+                        <i class="ti ti-arrow-left" aria-hidden="true"></i><span>Back to products</span>
+                    </a>
                 </div>
             </div>
         </div>
 
         <form action="" class="product-form">
             @csrf
-            <div class="row">
-                <div class="col-md-8">
+            <div class="row align-items-start">
+                <div class="col-lg-8">
                     <div class="card mb-3">
+                        <div class="card-header">
+                            <div class="product-section-heading">
+                                <span class="product-section-icon" aria-hidden="true"><i
+                                        class="ti ti-file-description"></i></span>
+                                <div>
+                                    <h3 class="product-section-title">Basic information</h3>
+                                    <p class="product-section-description">Keep the storefront copy clear, useful and up to
+                                        date.</p>
+                                </div>
+                            </div>
+                        </div>
                         <div class="card-body">
                             <div class="col-md-12">
                                 <div class="mb-3">
@@ -192,11 +211,19 @@
                         </div>
 
                     </div>
-                    <div class="card ">
+                    <div class="card">
                         <div class="disabled-placeholder" style="{{ count($product->attributes) ? '' : 'display:none' }}">
                         </div>
                         <div class="card-header">
-                            Overview
+                            <div class="product-section-heading">
+                                <span class="product-section-icon" aria-hidden="true"><i
+                                        class="ti ti-receipt-dollar"></i></span>
+                                <div>
+                                    <h3 class="product-section-title">Pricing &amp; inventory</h3>
+                                    <p class="product-section-description">Review pricing, offer dates and product
+                                        availability.</p>
+                                </div>
+                            </div>
                         </div>
                         <div class="card-body">
                             <div class="row">
@@ -242,7 +269,7 @@
                                     </div>
                                 </div>
                                 <div class="row">
-                                    <div class="col-md-12">
+                                    <div class="col-md-12 stock-management-box">
                                         <div class="mb-3">
                                             <label class="form-check">
                                                 <input class="form-check-input manage-stock-check" type="checkbox"
@@ -262,13 +289,13 @@
                                     </div>
                                 </div>
                                 <div class="row">
-                                    <div class="card mb-3">
+                                    <div class="card mb-3 stock-status-card">
                                         <div class="card-header">
                                             <h3 class="card-title">Stock Status</h3>
                                         </div>
                                         <div class="card-body">
                                             <div class="col-md-12">
-                                                <div class="mb-3">
+                                                <div class="stock-status-options">
                                                     <label class="form-check">
                                                         <input class="form-check-input" type="radio"
                                                             name="stock_status" @checked($product->in_stock == 1)
@@ -340,7 +367,24 @@
                         </div>
                     </div>
                 </div>
-                <div class="col-md-4">
+                <div class="col-lg-4 product-sidebar">
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h3 class="card-title">Approve Status</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="col-md-12">
+                                <div class="mb-3">
+                                    <select name="approved_status" class="form-control" id="">
+                                        <option @selected($product->approved_status == 'pending') value="pending">Pending</option>
+                                        <option @selected($product->approved_status == 'approved') value="approved">Approved</option>
+                                        <option @selected($product->approved_status == 'rejected') value="rejected">Rejected</option>
+                                    </select>
+                                    <x-input-error :messages="$errors->get('status')" class="mt-2" />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     <div class="card mb-3">
                         <div class="card-header">
                             <h3 class="card-title">Status</h3>
@@ -352,7 +396,7 @@
                                         <option @selected($product->status == 'active') value="active">Active</option>
                                         <option @selected($product->status == 'inactive') value="inactive">Inactive</option>
                                         <option @selected($product->status == 'draft') value="draft">Draft</option>
-                                        <option @selected($product->status == 'pending') value="pending">Pending</option>
+
                                     </select>
                                     <x-input-error :messages="$errors->get('status')" class="mt-2" />
                                 </div>
@@ -399,7 +443,7 @@
                         <div class="card-header">
                             <h3 class="card-title">Categories</h3>
                         </div>
-                        <div class="card-body" style="height:400px; overflow-y:scroll;">
+                        <div class="card-body category-scroll">
                             <div class="col-md-12">
                                 <div class="mb-3">
                                     <input type="text" class="form-control mb-4" id="category-search">
@@ -480,7 +524,7 @@
                         <div class="card-body">
                             <div class="col-md-12">
                                 <div class="mb-3">
-                                    <div>
+                                    <div class="product-label-options">
                                         <label class="form-check">
                                             <input class="form-check-input" type="checkbox" name="is_hot"
                                                 @checked($product->is_hot)>
@@ -513,12 +557,14 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="card mb-3" style="position:sticky; top:0;">
-                            <div class="card-body">
-                                <div class="col-md-12">
-                                    <div class="mb-3 row">
-                                        <button class="btn btn-primary mt-3" type="submit">Update</button>
-                                    </div>
+                    </div>
+                    <div class="card mb-3 product-actions-card">
+                        <div class="card-body">
+                            <div class="col-md-12">
+                                <div class="mb-3 row">
+                                    <button class="btn btn-primary mt-3 product-submit-btn" type="submit">
+                                        <i class="ti ti-device-floppy" aria-hidden="true"></i> Save changes
+                                    </button>
                                 </div>
                             </div>
                         </div>

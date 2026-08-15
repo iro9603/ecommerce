@@ -1,4 +1,4 @@
-@extends('admin.layouts.app')
+@extends('vendor-dashboard.layouts.app')
 
 @section('contents')
     <div class="container-xl">
@@ -21,9 +21,9 @@
 
                         <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
                             <a class="dropdown-item"
-                                href="{{ route('admin.products.create', ['type' => 'physical']) }}">Physical</a>
+                                href="{{ route('vendor.products.create', ['type' => 'physical']) }}">Physical</a>
                             <a class="dropdown-item"
-                                href="{{ route('admin.products.create', ['type' => 'digital']) }}">Digital</a>
+                                href="{{ route('vendor.products.create', ['type' => 'digital']) }}">Digital</a>
                         </div>
                     </div>
                 </div>
@@ -54,7 +54,6 @@
                                     <th>Stock Status</th>
                                     <th>Quantity</th>
                                     <th>Created At</th>
-                                    <th>Approved</th>
                                     <th>Status</th>
                                     <th>Store</th>
                                     <th class="text-end">Actions</th>
@@ -80,12 +79,12 @@
                                                     @if ($product->product_type == 'physical')
                                                         <div class="fw-semibold">
                                                             <a
-                                                                href="{{ route('admin.products.edit', $product->id) }}">{{ $product->name }}</a>
+                                                                href="{{ route('vendor.products.edit', $product->id) }}">{{ $product->name }}</a>
                                                         </div>
                                                     @else
                                                         <div class="fw-semibold">
                                                             <a
-                                                                href="{{ route('admin.digital-products.edit', $product->id) }}">{{ $product->name }}</a>
+                                                                href="{{ route('vendor.digital-products.edit', $product->id) }}">{{ $product->name }}</a>
                                                         </div>
                                                     @endif
 
@@ -183,17 +182,7 @@
                                                 </div>
                                             </div>
                                         </td>
-                                        <td>
 
-                                            @if ($product->approved_status == 'approved')
-                                                <span class="badge bg-success-lt">Approved</span>
-                                            @elseif($product->approved_status == 'rejected')
-                                                <span class="badge bg-danger-lt">Rejected</span>
-                                            @elseif($product->approved_status == 'pending')
-                                                <span class="badge bg-warning-lt">Pending</span>
-                                            @endif
-
-                                        </td>
                                         <td>
 
                                             @if ($product->status == 'active')
@@ -215,19 +204,19 @@
                                         <td>
                                             <div class="d-flex justify-content-end gap-2">
                                                 @if ($product->product_type == 'physical')
-                                                    <a href="{{ route('admin.products.edit', $product->id) }}"
+                                                    <a href="{{ route('vendor.products.edit', $product->id) }}"
                                                         class="btn btn-sm btn-outline-primary">
                                                         <i class="ti ti-edit fs-3"></i>
                                                     </a>
                                                 @else
-                                                    <a href="{{ route('admin.digital-products.edit', $product->id) }}"
+                                                    <a href="{{ route('vendor.digital-products.edit', $product->id) }}"
                                                         class="btn btn-sm btn-outline-primary">
                                                         <i class="ti ti-edit fs-3"></i>
                                                     </a>
                                                 @endif
 
 
-                                                <a href="{{ route('admin.products.destroy', $product) }}"
+                                                <a href="{{ route('vendor.products.destroy', $product) }}"
                                                     class="btn btn-sm btn-outline-danger delete-item">
                                                     <i class="ti ti-trash fs-3"></i>
                                                 </a>

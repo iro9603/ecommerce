@@ -1,4 +1,4 @@
-@extends('admin.layouts.app')
+@extends('vendor-dashboard.layouts.app')
 @push('styles')
     <link rel="stylesheet" href="https://unpkg.com/dropzone@5/dist/min/dropzone.min.css" type="text/css" />
     <style>
@@ -84,7 +84,7 @@
             }
         }
     </style>
-    @include('admin.product.partials.form-visuals')
+    @include('vendor.product.partials.form-visuals')
 @endpush
 @section('contents')
     <div class="container-xl product-editor">
@@ -102,7 +102,7 @@
                     </div>
                 </div>
                 <div class="col-auto ms-auto">
-                    <a class="btn btn-outline-secondary product-back-btn" href="{{ route('admin.products.index') }}">
+                    <a class="btn btn-outline-secondary product-back-btn" href="{{ route('vendor.products.index') }}">
                         <i class="ti ti-arrow-left" aria-hidden="true"></i><span>Back to products</span>
                     </a>
                 </div>
@@ -285,31 +285,13 @@
                                         <option value="active">Active</option>
                                         <option value="inactive">Inactive</option>
                                         <option value="draft">Draft</option>
-
                                     </select>
                                     <x-input-error :messages="$errors->get('status')" class="mt-2" />
                                 </div>
                             </div>
                         </div>
                     </div>
-                    <div class="card mb-3">
-                        <div class="card-header">
-                            <h3 class="card-title">Store</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="col-md-12">
-                                <div class="mb-3">
-                                    <select name="store" class="form-control select2" id="">
-                                        <option value="">Select a store</option>
-                                        @foreach ($stores as $store)
-                                            <option value="{{ $store->id }}">{{ $store->name }}</option>
-                                        @endforeach
-                                    </select>
-                                    <x-input-error :messages="$errors->get('store')" class="mt-2" />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+
                     <div class="card mb-3">
                         <div class="card-header">
                             <h3 class="card-title">Is Featured</h3>
@@ -533,7 +515,7 @@
 
                 $.ajax({
                     method: 'POST',
-                    url: "{{ route('admin.products.store', ['type' => ':type']) }}".replace(
+                    url: "{{ route('vendor.products.store', ['type' => ':type']) }}".replace(
                         ':type', '{{ request()->type }}'),
                     data: data,
                     contentType: false,
@@ -565,7 +547,7 @@
             // dropzone image upload
             Dropzone.autoDiscover = false;
             const imageUploader = new Dropzone("#imageUploader", {
-                url: "{{ route('admin.products.images.upload', ':id') }}".replace(':id', '{{ $product->id }}'),
+                url: "{{ route('vendor.products.images.upload', ':id') }}".replace(':id', '{{ $product->id }}'),
                 paramName: "image",
                 maxFilesize: 10,
                 acceptedFiles: "image/*",
@@ -617,7 +599,7 @@
                 const element = this;
                 $.ajax({
                     method: 'DELETE',
-                    url: "{{ route('admin.products.images.destroy', ':id') }}".replace(':id', imageId),
+                    url: "{{ route('vendor.products.images.destroy', ':id') }}".replace(':id', imageId),
                     headers: {
                         'X-CSRF-TOKEN': '{{ csrf_token() }}'
                     },
@@ -651,7 +633,7 @@
                     });
                 });
                 $.ajax({
-                    url: "{{ route('admin.products.images.reorder') }}",
+                    url: "{{ route('vendor.products.images.reorder') }}",
                     method: 'POST',
                     headers: {
                         'X-CSRF-TOKEN': "{{ csrf_token() }}"

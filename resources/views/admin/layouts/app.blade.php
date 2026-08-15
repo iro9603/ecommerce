@@ -73,12 +73,12 @@
     <!-- BEGIN GLOBAL MANDATORY SCRIPTS -->
     <script src="https://code.jquery.com/jquery-4.0.0.min.js"
         integrity="sha256-OaVG6prZf4v69dPg6PhVattBXkcOWQB62pdZ3ORyrao=" crossorigin="anonymous"></script>
+    <script src="{{ asset('assets/admin/js/tabler.min.js') }}" defer></script>
     <script src="{{ asset('assets/global/upload-preview/upload-preview.min.js') }}"></script>
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script src="{{ asset('assets/admin/js/tinymce/tinymce.min.js') }}"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script src="https://cdn.jsdelivr.net/npm/notyf@3/notyf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/nestable2/1.6.0/jquery.nestable.min.js"></script>
-    <script src="{{ asset('assets/admin/js/tabler.min.js') }}" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0/dist/js/select2.min.js"></script>
     <script src="{{ asset('assets/admin/libs/litepicker/dist/litepicker.js') }}" defer=""></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>

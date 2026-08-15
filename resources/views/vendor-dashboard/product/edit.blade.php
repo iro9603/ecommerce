@@ -1,4 +1,4 @@
-@extends('admin.layouts.app')
+@extends('vendor-dashboard.layouts.app')
 @push('styles')
     <link rel="stylesheet" href="https://unpkg.com/dropzone@5/dist/min/dropzone.min.css" type="text/css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@simonwep/pickr/dist/themes/classic.min.css" />
@@ -199,7 +199,7 @@
             }
         }
     </style>
-    @include('admin.product.partials.form-visuals')
+    @include('vendor-dashboard.product.partials.form-visuals')
 @endpush
 @section('contents')
     <div class="container-xl product-editor">
@@ -218,7 +218,7 @@
                 </div>
 
                 <div class="col-auto ms-auto">
-                    <a class="btn btn-outline-secondary product-back-btn" href="{{ route('admin.products.index') }}">
+                    <a class="btn btn-outline-secondary product-back-btn" href="{{ route('vendor.products.index') }}">
                         <i class="ti ti-arrow-left" aria-hidden="true"></i><span>Back to products</span>
                     </a>
                 </div>
@@ -411,7 +411,7 @@
                             <div class="col-md-12">
                                 <div class="accordion" id="accordion-default">
                                     @foreach ($attributesWithValues as $attribute)
-                                        @include('admin.product.partials.attribute', [
+                                        @include('vendor.product.partials.attribute', [
                                             'attribute' => $attribute,
                                             'product' => $product,
                                         ])
@@ -429,30 +429,13 @@
                         <div class="card-body">
                             <div class="col-md-12">
                                 <div class="accordion" id="accordion-variant">
-                                    @include('admin.product.partials.variants', ['variants' => $variants])
+                                    @include('vendor.product.partials.variants', ['variants' => $variants])
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
                 <div class="col-lg-4 product-sidebar">
-                    <div class="card mb-3">
-                        <div class="card-header">
-                            <h3 class="card-title">Approve Status</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="col-md-12">
-                                <div class="mb-3">
-                                    <select name="approved_status" class="form-control" id="">
-                                        <option @selected($product->approved_status == 'pending') value="pending">Pending</option>
-                                        <option @selected($product->approved_status == 'approved') value="approved">Approved</option>
-                                        <option @selected($product->approved_status == 'rejected') value="rejected">Rejected</option>
-                                    </select>
-                                    <x-input-error :messages="$errors->get('status')" class="mt-2" />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                     <div class="card mb-3">
                         <div class="card-header">
                             <h3 class="card-title">Status</h3>
@@ -464,27 +447,9 @@
                                         <option @selected($product->status == 'active') value="active">Active</option>
                                         <option @selected($product->status == 'inactive') value="inactive">Inactive</option>
                                         <option @selected($product->status == 'draft') value="draft">Draft</option>
+                                        <option @selected($product->status == 'pending') value="pending">Pending</option>
                                     </select>
                                     <x-input-error :messages="$errors->get('status')" class="mt-2" />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="card mb-3">
-                        <div class="card-header">
-                            <h3 class="card-title">Store</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="col-md-12">
-                                <div class="mb-3">
-                                    <select name="store" class="form-control select2" id="">
-                                        <option value="">Select a store</option>
-                                        @foreach ($stores as $store)
-                                            <option @selected($product->store_id == $store->id) value="{{ $store->id }}">
-                                                {{ $store->name }}</option>
-                                        @endforeach
-                                    </select>
-                                    <x-input-error :messages="$errors->get('store')" class="mt-2" />
                                 </div>
                             </div>
                         </div>
@@ -949,7 +914,7 @@
                         $button.prop('disabled', true);
 
                         $.ajax({
-                            url: "{{ route('admin.products.attributes.destroy', ['product' => $product->id, 'attribute' => '__ID__']) }}"
+                            url: "{{ route('vendor.products.attributes.destroy', ['product' => $product->id, 'attribute' => '__ID__']) }}"
                                 .replace('__ID__', attributeId),
                             method: 'DELETE',
                             headers: {
@@ -1005,7 +970,7 @@
                 );
 
                 $.ajax({
-                    url: "{{ route('admin.products.attributes.store', ':id') }}".replace(':id',
+                    url: "{{ route('vendor.products.attributes.store', ':id') }}".replace(':id',
                         '{{ $product->id }}'),
                     method: 'POST',
                     headers: {
@@ -1070,7 +1035,7 @@
                     const data = $variantContainer.find(':input').serialize();
 
                     $.ajax({
-                        url: "{{ route('admin.products.variants.update', $product->id) }}",
+                        url: "{{ route('vendor.products.variants.update', $product->id) }}",
                         method: 'POST',
                         data,
                         success(response) {
@@ -1166,7 +1131,7 @@
 
                 $.ajax({
                     method: 'POST',
-                    url: "{{ route('admin.products.update', ':id') }}".replace(':id',
+                    url: "{{ route('vendor.products.update', ':id') }}".replace(':id',
                         '{{ $product->id }}'),
                     data: data,
                     contentType: false,
@@ -1196,7 +1161,7 @@
         // dropzone image upload
         Dropzone.autoDiscover = false;
         const imageUploader = new Dropzone("#imageUploader", {
-            url: "{{ route('admin.products.images.upload', ':id') }}".replace(':id', '{{ $product->id }}'),
+            url: "{{ route('vendor.products.images.upload', ':id') }}".replace(':id', '{{ $product->id }}'),
             paramName: "image",
             maxFilesize: 10,
             acceptedFiles: "image/*",
@@ -1248,7 +1213,7 @@
             const element = this;
             $.ajax({
                 method: 'DELETE',
-                url: "{{ route('admin.products.images.destroy', ':id') }}".replace(':id', imageId),
+                url: "{{ route('vendor.products.images.destroy', ':id') }}".replace(':id', imageId),
                 headers: {
                     'X-CSRF-TOKEN': '{{ csrf_token() }}'
                 },
@@ -1281,7 +1246,7 @@
                 });
             });
             $.ajax({
-                url: "{{ route('admin.products.images.reorder') }}",
+                url: "{{ route('vendor.products.images.reorder') }}",
                 method: 'POST',
                 headers: {
                     'X-CSRF-TOKEN': "{{ csrf_token() }}"

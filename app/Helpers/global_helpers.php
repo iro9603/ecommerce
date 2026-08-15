@@ -2,6 +2,9 @@
 
 /** check user has permission */
 
+use App\Models\User;
+use Illuminate\Support\Facades\Auth;
+
 if (!function_exists('hasPermission')) {
     function hasPermission(array $permissions): bool
     {
@@ -16,5 +19,12 @@ if (!function_exists('hasPermission')) {
         }
 
         return $admin->hasAnyPermission($permissions);
+    }
+}
+
+if (!function_exists('user')) {
+    function user(): User
+    {
+        return Auth::user('web');
     }
 }
