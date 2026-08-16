@@ -167,6 +167,7 @@
             };
             const csrfToken = '{{ csrf_token() }}';
             let selectedCategoryId = null;
+            let slugEditedManually = false;
 
             function categoryUrl(template, id) {
                 return template.replace('__ID__', encodeURIComponent(id));
@@ -424,9 +425,13 @@
 
             // slug auto-generate
             $('#name').on('input', function() {
-                if (!$('#category-id').val()) {
+                if (!slugEditedManually) {
                     $('#slug').val(slugify($(this).val()));
                 }
+            });
+
+            $('#slug').on('input', function() {
+                slugEditedManually = true;
             });
 
             function slugify(text) {
@@ -443,6 +448,7 @@
                 $('#category-title').text('Edit Category');
                 $('#name').val(cat.name);
                 $('#slug').val(cat.slug);
+                slugEditedManually = cat.slug !== slugify(cat.name);
                 $('#is_active').prop('checked', isTruthy(cat.is_active));
                 loadParentDropdown(cat.parent_id, cat.id);
                 $('#category-id').val(cat.id);
@@ -453,6 +459,7 @@
                 $('#category-title').text('Create Category');
                 $('#name').val('');
                 $('#slug').val('');
+                slugEditedManually = false;
                 $('#parent_id').val('');
                 $('#is_active').prop('checked', true);
                 $('#category-id').val('');

@@ -247,6 +247,8 @@
                                     <label class="form-label required">Name</label>
                                     <input type="text" class="form-control" name="name" placeholder=""
                                         value="{{ $product->name }}" id="name">
+                                    <input type="hidden" name="store" value="{{ user()->store->id }}">
+                                    <input type="hidden" name="approved_status" value="{{ $product->approved_status }}">
                                     <x-input-error :messages="$errors->get('name')" class="mt-2" />
                                 </div>
                             </div>
@@ -429,7 +431,9 @@
                         <div class="card-body">
                             <div class="col-md-12">
                                 <div class="accordion" id="accordion-variant">
-                                    @include('vendor.product.partials.variants', ['variants' => $variants])
+                                    @include('vendor-dashboard.product.partials.variants', [
+                                        'variants' => $variants,
+                                    ])
                                 </div>
                             </div>
                         </div>
@@ -447,7 +451,7 @@
                                         <option @selected($product->status == 'active') value="active">Active</option>
                                         <option @selected($product->status == 'inactive') value="inactive">Inactive</option>
                                         <option @selected($product->status == 'draft') value="draft">Draft</option>
-                                        <option @selected($product->status == 'pending') value="pending">Pending</option>
+
                                     </select>
                                     <x-input-error :messages="$errors->get('status')" class="mt-2" />
                                 </div>

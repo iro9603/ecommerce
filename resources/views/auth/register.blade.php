@@ -51,18 +51,21 @@
 
                                         <div class="payment_option mb-30">
                                             <div class="custome-radio">
-                                                <input class="form-check-input" required="" type="radio"
-                                                    name="user_type" id="exampleRadios3" checked="" value="user" />
-                                                <label class="form-check-label" for="exampleRadios3"
-                                                    data-bs-toggle="collapse" data-target="#bankTranfer"
-                                                    aria-controls="bankTranfer">I am a customer</label>
+                                                <input class="form-check-input" required type="radio" name="user_type"
+                                                    id="customer" value="user" @checked(old('user_type', 'user') === 'user') />
+
+                                                <label class="form-check-label" for="customer">
+                                                    I am a customer
+                                                </label>
                                             </div>
+
                                             <div class="custome-radio">
-                                                <input class="form-check-input" required="" type="radio"
-                                                    name="user_type" id="exampleRadios4" checked="" value="vendor" />
-                                                <label class="form-check-label" for="exampleRadios4"
-                                                    data-bs-toggle="collapse" data-target="#checkPayment"
-                                                    aria-controls="checkPayment">I am a vendor</label>
+                                                <input class="form-check-input" required type="radio" name="user_type"
+                                                    id="vendor" value="vendor" @checked(old('user_type') === 'vendor') />
+
+                                                <label class="form-check-label" for="vendor">
+                                                    I am a vendor
+                                                </label>
                                             </div>
                                         </div>
                                         <div class="form-group mb-0">

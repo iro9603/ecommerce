@@ -183,6 +183,7 @@
                                     <label class="form-label required">Name</label>
                                     <input type="text" class="form-control" name="name" placeholder=""
                                         value="{{ $product->name }}" id="name">
+                                    <input type="hidden" name="store" value="{{ user()->store->id }}">
                                     <x-input-error :messages="$errors->get('name')" class="mt-2" />
                                 </div>
                             </div>

@@ -81,6 +81,7 @@ class VendorProductController extends Controller
             $product->manage_stock = $request->has('manage_stock') ? 'yes' : 'no';
             $product->in_stock = $request->stock_status == 'in_stock' ? 1 : 0;
             $product->status = $request->status;
+            $product->approved_status = 'pending';
             $product->brand_id = $request->brand;
             $product->store_id = user()->store->id;
             $product->is_featured = $request->has('is_featured') ? 1 : 0;

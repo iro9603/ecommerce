@@ -54,6 +54,7 @@
                                     <th>Stock Status</th>
                                     <th>Quantity</th>
                                     <th>Created At</th>
+                                    <th>Approved</th>
                                     <th>Status</th>
                                     <th>Store</th>
                                     <th class="text-end">Actions</th>
@@ -182,15 +183,23 @@
                                                 </div>
                                             </div>
                                         </td>
+                                        <td>
 
+                                            @if ($product->approved_status == 'approved')
+                                                <span class="badge bg-success-lt">Approved</span>
+                                            @elseif($product->approved_status == 'rejected')
+                                                <span class="badge bg-danger-lt">Rejected</span>
+                                            @elseif($product->approved_status == 'pending')
+                                                <span class="badge bg-warning-lt">Pending</span>
+                                            @endif
+
+                                        </td>
                                         <td>
 
                                             @if ($product->status == 'active')
                                                 <span class="badge bg-success-lt">Active</span>
                                             @elseif($product->status == 'inactive')
                                                 <span class="badge bg-secondary-lt">Inactive</span>
-                                            @elseif($product->status == 'pending')
-                                                <span class="badge bg-warning-lt">Pending</span>
                                             @elseif($product->status == 'draft')
                                                 <span class="badge bg-secondary-lt">Draft</span>
                                             @endif

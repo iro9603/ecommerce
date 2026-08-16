@@ -84,7 +84,7 @@
             }
         }
     </style>
-    @include('vendor.product.partials.form-visuals')
+    @include('vendor-dashboard.product.partials.form-visuals')
 @endpush
 @section('contents')
     <div class="container-xl product-editor">
@@ -131,6 +131,7 @@
                                     <label class="form-label required">Name</label>
                                     <input type="text" class="form-control" name="name" placeholder=""
                                         value="{{ old('name') }}" id="name">
+                                    <input type="hidden" name="store" value="{{ user()->store->id }}">
                                     <x-input-error :messages="$errors->get('name')" class="mt-2" />
                                 </div>
                             </div>
@@ -291,6 +292,7 @@
                             </div>
                         </div>
                     </div>
+
 
                     <div class="card mb-3">
                         <div class="card-header">
