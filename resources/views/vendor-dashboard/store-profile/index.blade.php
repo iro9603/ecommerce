@@ -182,13 +182,67 @@
                 {{-- Branding --}}
                 <div class="col-12">
                     <div class="card">
+                        @php
+                            $status = $store->status;
+
+                            $statusConfig = match ($status) {
+                                'draft' => [
+                                    'class' => 'bg-secondary-subtle text-secondary',
+                                    'icon' => 'ti-file-pencil',
+                                    'label' => 'Draft',
+                                ],
+                                'pending' => [
+                                    'class' => 'bg-warning-subtle text-warning',
+                                    'icon' => 'ti-clock-hour-4',
+                                    'label' => 'Pending Review',
+                                ],
+                                'rejected' => [
+                                    'class' => 'bg-danger-subtle text-danger',
+                                    'icon' => 'ti-circle-x',
+                                    'label' => 'Rejected',
+                                ],
+                                'active' => [
+                                    'class' => 'bg-success-subtle text-success',
+                                    'icon' => 'ti-circle-check',
+                                    'label' => 'Active',
+                                ],
+                                'suspended' => [
+                                    'class' => 'bg-danger-subtle text-danger',
+                                    'icon' => 'ti-ban',
+                                    'label' => 'Suspended',
+                                ],
+                                default => [
+                                    'class' => 'bg-secondary-subtle text-secondary',
+                                    'icon' => 'ti-help-circle',
+                                    'label' => ucfirst($status),
+                                ],
+                            };
+                        @endphp
+
                         <div class="card-header">
-                            <div>
-                                <h3 class="card-title">Branding</h3>
-                                <p class="card-subtitle">Upload your store logo and banner.</p>
+                            <div
+                                class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 w-100">
+
+                                <div>
+                                    <h3 class="card-title mb-1">Branding</h3>
+                                    <p class="card-subtitle text-muted mb-0">
+                                        Upload your store logo and banner.
+                                    </p>
+                                </div>
+
+                                <div class="text-md-end">
+                                    <div class="text-muted small mb-1">
+                                        Store status
+                                    </div>
+
+                                    <span class="badge {{ $statusConfig['class'] }} px-3 py-2">
+                                        <i class="ti {{ $statusConfig['icon'] }} me-1"></i>
+                                        {{ $statusConfig['label'] }}
+                                    </span>
+                                </div>
+
                             </div>
                         </div>
-
                         <div class="card-body">
                             <div class="row g-4 store-branding-grid">
                                 <div class="col-md-5">
@@ -624,7 +678,8 @@
                     if (!file) {
                         label.textContent = hasInitialPreview ? 'Change image' : emptyLabel;
                         filename.textContent = hasInitialPreview ? initialFilename : 'No file selected';
-                        setStatus(hasInitialPreview ? 'uploaded' : 'empty', hasInitialPreview ? uploadedText :
+                        setStatus(hasInitialPreview ? 'uploaded' : 'empty', hasInitialPreview ?
+                            uploadedText :
                             emptyText);
                         return;
                     }
