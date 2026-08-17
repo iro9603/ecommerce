@@ -59,6 +59,13 @@ Los permisos base se crean en `database/seeders/Admin/PermissionSeeder.php`.
 | `KYC Management` | `KYC Management` | `admin` | Ver y gestionar solicitudes KYC |
 | `Role Management` | `Access Management` | `admin` | Crear, editar y eliminar roles |
 | `Role User Management` | `Access Management` | `admin` | Crear, editar y eliminar usuarios admin con roles |
+| `Category Management` | `Product Category` | `admin` | Gestionar categorias del catalogo |
+| `Tags Management` | `Product tags` | `admin` | Gestionar tags de productos |
+| `Brand Management` | `Product Brands` | `admin` | Gestionar marcas de productos |
+| `Product Management` | `Products` | `admin` | Crear, editar, aprobar y eliminar productos y sus subrecursos |
+| `Store Auto-Approval Management` | `Products` | `admin` | Activar o desactivar autoaprobacion por tienda con auditoria |
+
+`Store Auto-Approval Management` es deliberadamente independiente de `Product Management`. Un editor de productos no puede confiar en una tienda a menos que su rol reciba tambien ese permiso.
 
 ## Seeders
 

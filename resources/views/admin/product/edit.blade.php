@@ -227,6 +227,7 @@
 
         <form action="" class="product-form">
             @csrf
+            <input type="hidden" name="moderation_version" value="{{ $product->moderation_version }}">
             <div class="row align-items-start">
                 <div class="col-lg-8">
                     <div class="card mb-3">
@@ -261,14 +262,14 @@
                             <div class="col-md-12">
                                 <div class="mb-3">
                                     <label class="form-label required">Short Description</label>
-                                    <textarea name="short_description" id="short-editor" cols="30" rows="10">{!! $product->short_description !!}</textarea>
+                                    <textarea name="short_description" id="short-editor" cols="30" rows="10">{{ old('short_description', $product->short_description) }}</textarea>
                                     <x-input-error :messages="$errors->get('short_description')" class="mt-2" />
                                 </div>
                             </div>
                             <div class="col-md-12">
                                 <div class="mb-3">
                                     <label class="form-label required">Content</label>
-                                    <textarea name="content" id="editor" cols="30" rows="10">{!! $product->description !!}</textarea>
+                                    <textarea name="content" id="editor" cols="30" rows="10">{{ old('content', $product->description) }}</textarea>
                                     <x-input-error :messages="$errors->get('content')" class="mt-2" />
                                 </div>
                             </div>
@@ -436,6 +437,133 @@
                     </div>
                 </div>
                 <div class="col-lg-4 product-sidebar">
+                    @php
+                        $review = $product->latestApprovalReview;
+
+                        $riskClass = match ($review?->risk_level) {
+                            'critical' => 'danger',
+                            'high' => 'warning',
+                            'medium' => 'info',
+                            'low' => 'success',
+                            default => 'secondary',
+                        };
+
+                        $riskText = match ($riskClass) {
+                            'danger' => 'text-white',
+                            'warning' => 'text-gray',
+                            'info' => 'text-white',
+                            'success' => 'text-white',
+                            default => 'secondary',
+                        };
+                    @endphp
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h3 class="card-title mb-0">
+                                <i class="ti ti-shield-exclamation me-1"></i>
+                                Risk Assessment
+                            </h3>
+
+                            @if ($review)
+                                <span class="badge bg-{{ $riskClass }} text-uppercase {{ $riskText }}">
+                                    {{ $review->risk_level }}
+                                </span>
+                            @endif
+                        </div>
+
+                        <div class="card-body">
+                            @if ($review)
+                                {{-- Risk summary --}}
+                                <div class="row g-3 mb-4">
+                                    <div class="col-md-6">
+                                        <div class="border rounded p-3 h-100">
+                                            <div class="text-muted small mb-1">
+                                                Risk Level
+                                            </div>
+
+                                            <div class="d-flex align-items-center gap-2">
+                                                <span
+                                                    class="badge bg-{{ $riskClass }} fs-6 text-uppercase  {{ $riskText }}">
+                                                    {{ $review->risk_level }}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="col-md-6">
+                                        <div class="border rounded p-3 h-100">
+                                            <div class="text-muted small mb-1">
+                                                Risk Score
+                                            </div>
+
+                                            <div class="d-flex align-items-end gap-2">
+                                                <span class="fs-2 fw-bold text-{{ $riskClass }}">
+                                                    {{ $review->risk_score }}
+                                                </span>
+
+                                                <span class="text-muted mb-1">
+                                                    / 100
+                                                </span>
+                                            </div>
+
+                                            <div class="progress mt-2" style="height: 6px;">
+                                                <div class="progress-bar bg-{{ $riskClass }}" role="progressbar"
+                                                    style="width: {{ min($review->risk_score, 100) }}%"
+                                                    aria-valuenow="{{ $review->risk_score }}" aria-valuemin="0"
+                                                    aria-valuemax="100">
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {{-- Risk reasons --}}
+                                <div>
+                                    <h5 class="mb-3">
+                                        Risk Factors
+                                    </h5>
+
+                                    @forelse ($review->risk_reasons ?? [] as $factor)
+                                        <div class="border rounded p-3 mb-2">
+                                            <div class="d-flex justify-content-between align-items-start gap-3">
+                                                <div>
+                                                    <div class="d-flex align-items-center gap-2 mb-1">
+                                                        <strong>
+                                                            {{ Str::headline($factor['code']) }}
+                                                        </strong>
+                                                    </div>
+                                                    <p>
+                                                        @if ($factor['blocks_automatic_approval'] ?? false)
+                                                            <span class="badge bg-danger-subtle text-danger">
+                                                                Blocks automatic approval
+                                                            </span>
+                                                        @endif
+                                                    </p>
+                                                    <p class="text-muted mb-0">
+                                                        {{ $factor['message'] }}
+                                                    </p>
+                                                </div>
+
+                                                <span
+                                                    class="badge {{ ($factor['score'] ?? 0) > 0 ? 'bg-danger-subtle text-danger' : 'bg-secondary-subtle text-secondary' }}">
+                                                    +{{ $factor['score'] ?? 0 }}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    @empty
+                                        <div class="text-muted">
+                                            No risk factors detected.
+                                        </div>
+                                    @endforelse
+                                </div>
+                            @else
+                                <div class="text-center py-4 text-muted">
+                                    <i class="ti ti-shield-check fs-1 d-block mb-2"></i>
+                                    No risk assessment available.
+                                </div>
+                            @endif
+                        </div>
+                    </div>
                     <div class="card mb-3">
                         <div class="card-header">
                             <h3 class="card-title">Approve Status</h3>
@@ -443,12 +571,39 @@
                         <div class="card-body">
                             <div class="col-md-12">
                                 <div class="mb-3">
-                                    <select name="approved_status" class="form-control" id="">
-                                        <option @selected($product->approved_status == 'pending') value="pending">Pending</option>
-                                        <option @selected($product->approved_status == 'approved') value="approved">Approved</option>
-                                        <option @selected($product->approved_status == 'rejected') value="rejected">Rejected</option>
+                                    <select name="approved_status" class="form-control" id="approval-status">
+                                        <option @selected(old('approved_status', $product->approved_status) == 'pending') value="pending">
+                                            Pending
+                                        </option>
+                                        <option @selected(old('approved_status', $product->approved_status) == 'approved') value="approved">
+                                            Approved
+                                        </option>
+                                        <option @selected(old('approved_status', $product->approved_status) == 'rejected') value="rejected">
+                                            Rejected
+                                        </option>
                                     </select>
-                                    <x-input-error :messages="$errors->get('status')" class="mt-2" />
+
+                                    <x-input-error :messages="$errors->get('approved_status')" class="mt-2" />
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="approval-reason" class="form-label">
+                                        Approval reason
+
+                                        <span id="approval-reason-required" class="text-danger d-none"
+                                            aria-hidden="true">
+                                            *
+                                        </span>
+                                    </label>
+
+                                    <textarea name="approval_reason" id="approval-reason" class="form-control" rows="3"
+                                        aria-describedby="approval-reason-help">{{ old('approval_reason', $product->approval_reason) }}</textarea>
+
+                                    <small id="approval-reason-help" class="form-hint">
+                                        Required when rejecting or pending a product.
+                                    </small>
+
+                                    <x-input-error :messages="$errors->get('approval_reason')" class="mt-2" />
                                 </div>
                             </div>
                         </div>
@@ -489,6 +644,11 @@
                             </div>
                         </div>
                     </div>
+                    @if ($product->store && auth('admin')->user()?->can('Store Auto-Approval Management'))
+                        @include('admin.product.partials.store-auto-approval', [
+                            'store' => $product->store,
+                        ])
+                    @endif
                     <div class="card mb-3">
                         <div class="card-header">
                             <h3 class="card-title">Is Featured</h3>
@@ -1313,5 +1473,37 @@
                 .replace(/\-+/g, '-')
                 .replace(/^\-+|\-+$/g, '');
         }
+
+        const approvalStatus = $('#approval-status');
+        const approvalReason = $('#approval-reason');
+
+        function syncApprovalReasonRequirement() {
+            const isRejected = approvalStatus.val() === 'rejected';
+
+            approvalReason.prop('required', isRejected);
+            approvalReason.attr('aria-required', isRejected ? 'true' : 'false');
+            $('#approval-reason-required').toggleClass('d-none', !isRejected);
+        }
+
+        approvalStatus.on('change', syncApprovalReasonRequirement);
+        syncApprovalReasonRequirement();
+    </script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const status = document.getElementById('approval-status');
+            const reason = document.getElementById('approval-reason');
+            const requiredIndicator = document.getElementById('approval-reason-required');
+
+            function updateApprovalReasonRequirement() {
+                const isRequired = ['pending', 'rejected'].includes(status.value);
+
+                reason.required = isRequired;
+                requiredIndicator.classList.toggle('d-none', !isRequired);
+            }
+
+            status.addEventListener('change', updateApprovalReasonRequirement);
+
+            updateApprovalReasonRequirement();
+        });
     </script>
 @endpush

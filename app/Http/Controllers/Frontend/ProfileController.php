@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Frontend;
 
 use App\Http\Controllers\Controller;
-use App\Models\User;
 use App\Services\AlertService;
 use App\Traits\FileUploadTrait;
 use Illuminate\Http\RedirectResponse;
@@ -13,6 +12,7 @@ use Illuminate\View\View;
 class ProfileController extends Controller
 {
     use FileUploadTrait;
+
     //
     public function index(): View
     {
@@ -23,7 +23,7 @@ class ProfileController extends Controller
     {
         $request->validate([
             'name' => ['required', 'string', 'max:50'],
-            'email' => ['required', 'email', 'unique:users,email,' . auth('web')->user()->id],
+            'email' => ['required', 'email', 'unique:users,email,'.auth('web')->user()->id],
             'avatar' => ['nullable', 'image', 'max:2048'],
         ]);
 
@@ -35,7 +35,18 @@ class ProfileController extends Controller
         }
         $user->name = $request->name;
         $user->email = $request->email;
+
+        $emailChanged = $user->isDirty('email');
+
+        if ($emailChanged) {
+            $user->email_verified_at = null;
+        }
+
         $user->save();
+
+        if ($emailChanged) {
+            $user->sendEmailVerificationNotification();
+        }
 
         AlertService::updated();
 
@@ -55,6 +66,7 @@ class ProfileController extends Controller
         $user->save();
 
         AlertService::updated();
+
         return redirect()->back();
     }
 }

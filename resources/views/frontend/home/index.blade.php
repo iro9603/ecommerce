@@ -19,7 +19,7 @@
     @include('frontend.home.sections.flash-sale-section')
     <!--End Best Sales-->
 
-    @include('frontend.home.sections.new-arrival-section')
+    @include('frontend.home.sections.published-products-section', ['products' => $newArrivals])
     <!-- new arrival end -->
 
 

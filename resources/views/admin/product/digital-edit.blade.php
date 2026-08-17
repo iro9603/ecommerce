@@ -163,6 +163,7 @@
 
         <form action="" class="product-form">
             @csrf
+            <input type="hidden" name="moderation_version" value="{{ $product->moderation_version }}">
             <div class="row align-items-start">
                 <div class="col-lg-8">
                     <div class="card mb-3">
@@ -197,14 +198,14 @@
                             <div class="col-md-12">
                                 <div class="mb-3">
                                     <label class="form-label required">Short Description</label>
-                                    <textarea name="short_description" id="short-editor" cols="30" rows="10">{!! $product->short_description !!}</textarea>
+                                    <textarea name="short_description" id="short-editor" cols="30" rows="10">{{ old('short_description', $product->short_description) }}</textarea>
                                     <x-input-error :messages="$errors->get('short_description')" class="mt-2" />
                                 </div>
                             </div>
                             <div class="col-md-12">
                                 <div class="mb-3">
                                     <label class="form-label required">Content</label>
-                                    <textarea name="content" id="editor" cols="30" rows="10">{!! $product->description !!}</textarea>
+                                    <textarea name="content" id="editor" cols="30" rows="10">{{ old('content', $product->description) }}</textarea>
                                     <x-input-error :messages="$errors->get('content')" class="mt-2" />
                                 </div>
                             </div>
@@ -375,12 +376,24 @@
                         <div class="card-body">
                             <div class="col-md-12">
                                 <div class="mb-3">
-                                    <select name="approved_status" class="form-control" id="">
-                                        <option @selected($product->approved_status == 'pending') value="pending">Pending</option>
-                                        <option @selected($product->approved_status == 'approved') value="approved">Approved</option>
-                                        <option @selected($product->approved_status == 'rejected') value="rejected">Rejected</option>
+                                    <select name="approved_status" class="form-control" id="approval-status">
+                                        <option @selected(old('approved_status', $product->approved_status) == 'pending') value="pending">Pending</option>
+                                        <option @selected(old('approved_status', $product->approved_status) == 'approved') value="approved">Approved</option>
+                                        <option @selected(old('approved_status', $product->approved_status) == 'rejected') value="rejected">Rejected</option>
                                     </select>
-                                    <x-input-error :messages="$errors->get('status')" class="mt-2" />
+                                    <x-input-error :messages="$errors->get('approved_status')" class="mt-2" />
+                                </div>
+                                <div class="mb-3">
+                                    <label for="approval-reason" class="form-label">
+                                        Approval reason
+                                        <span id="approval-reason-required" class="text-danger d-none"
+                                            aria-hidden="true">*</span>
+                                    </label>
+                                    <textarea name="approval_reason" id="approval-reason" class="form-control" rows="3"
+                                        aria-describedby="approval-reason-help">{{ old('approval_reason') }}</textarea>
+                                    <small id="approval-reason-help" class="form-hint">Required when rejecting a
+                                        product.</small>
+                                    <x-input-error :messages="$errors->get('approval_reason')" class="mt-2" />
                                 </div>
                             </div>
                         </div>
@@ -422,6 +435,9 @@
                             </div>
                         </div>
                     </div>
+                    @if ($product->store && auth('admin')->user()?->can('Store Auto-Approval Management'))
+                        @include('admin.product.partials.store-auto-approval', ['store' => $product->store])
+                    @endif
                     <div class="card mb-3">
                         <div class="card-header">
                             <h3 class="card-title">Is Featured</h3>
@@ -716,7 +732,7 @@
         const fileUploader = new Dropzone("#fileUploader", {
             url: "{{ route('admin.digital-products.file.upload') }}",
             paramName: "file",
-            maxFilesize: 1024,
+            maxFilesize: {{ (int) ceil(config('products.digital_upload.max_file_size_kb') / 1024) }},
             chunking: true,
             forceChunking: true,
             chunkSize: 1024 * 1024, // 1MB per Chunk
@@ -875,5 +891,19 @@
                 .replace(/\-+/g, '-')
                 .replace(/^\-+|\-+$/g, '');
         }
+
+        const approvalStatus = $('#approval-status');
+        const approvalReason = $('#approval-reason');
+
+        function syncApprovalReasonRequirement() {
+            const isRejected = approvalStatus.val() === 'rejected';
+
+            approvalReason.prop('required', isRejected);
+            approvalReason.attr('aria-required', isRejected ? 'true' : 'false');
+            $('#approval-reason-required').toggleClass('d-none', !isRejected);
+        }
+
+        approvalStatus.on('change', syncApprovalReasonRequirement);
+        syncApprovalReasonRequirement();
     </script>
 @endpush

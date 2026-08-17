@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Admin\AdminDigitalProductFileController;
 use App\Http\Controllers\Admin\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Admin\Auth\ConfirmablePasswordController;
 use App\Http\Controllers\Admin\Auth\EmailVerificationNotificationController;
@@ -11,11 +12,12 @@ use App\Http\Controllers\Admin\Auth\VerifyEmailController;
 use App\Http\Controllers\Admin\BrandController;
 use App\Http\Controllers\Admin\CategoryController;
 use App\Http\Controllers\Admin\KycRequestController;
+use App\Http\Controllers\Admin\ProductController;
 use App\Http\Controllers\Admin\ProfileController;
 use App\Http\Controllers\Admin\RoleController;
-use App\Http\Controllers\Admin\UserRoleController;
+use App\Http\Controllers\Admin\StoreAutoApprovalController;
 use App\Http\Controllers\Admin\TagController;
-use App\Http\Controllers\Admin\ProductController;
+use App\Http\Controllers\Admin\UserRoleController;
 use App\Http\Controllers\SettingController;
 use Illuminate\Support\Facades\Route;
 
@@ -123,9 +125,15 @@ Route::middleware('auth:admin')
 
         /** Digital product routes */
         Route::get('/products/digital/{product}/edit', [ProductController::class, 'editDigital'])->name('digital-products.edit');
-        Route::post('/products/digital/file-upload', [ProductController::class, 'uploadDigitalProductFile'])->name('digital-products.file.upload');
-        Route::delete('/products/digital/{product}/{file}', [ProductController::class, 'destroyDigitalProductFile'])->name('digital-products.file.destroy');
+        Route::post('/products/digital/file-upload', [AdminDigitalProductFileController::class, 'store'])
+            ->middleware('throttle:300,1')
+            ->name('digital-products.file.upload');
+        Route::delete('/products/digital/{product}/{file}', [AdminDigitalProductFileController::class, 'destroy'])
+            ->name('digital-products.file.destroy');
         Route::delete('/products/{product}', [ProductController::class, 'destroy'])->name('products.destroy');
+
+        Route::patch('/stores/{store}/product-auto-approval', [StoreAutoApprovalController::class, 'update'])
+            ->name('stores.product-auto-approval.update');
 
         /** Setting routes */
         Route::get('/settings', [SettingController::class, 'index'])->name('settings.index');

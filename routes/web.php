@@ -1,16 +1,21 @@
 <?php
 
+use App\Http\Controllers\Frontend\HomeController;
 use App\Http\Controllers\Frontend\KycController;
+use App\Http\Controllers\Frontend\ProductCatalogController;
 use App\Http\Controllers\Frontend\ProfileController;
 use App\Http\Controllers\Frontend\StoreController;
 use App\Http\Controllers\Frontend\UserDashboardController;
 use App\Http\Controllers\Frontend\VendorDashboardController;
+use App\Http\Controllers\Frontend\VendorDigitalProductFileController;
 use App\Http\Controllers\Frontend\VendorProductController;
 use Illuminate\Support\Facades\Route;
 
-Route::get('/', function () {
-    return view('frontend.home.index');
-});
+Route::get('/', [HomeController::class, 'index'])->name('home');
+Route::get('/products', [ProductCatalogController::class, 'index'])->name('products.index');
+Route::get('/products/{slug}', [ProductCatalogController::class, 'show'])
+    ->where('slug', '[A-Za-z0-9-]+')
+    ->name('products.show');
 
 Route::group(['middleware' => ['auth', 'verified']], function () {
 
@@ -57,8 +62,11 @@ Route::group(['prefix' => 'vendor', 'as' => 'vendor.', 'middleware' => ['auth', 
 
     /** Digital product routes */
     Route::get('/products/digital/{product}/edit', [VendorProductController::class, 'editDigital'])->name('digital-products.edit');
-    Route::post('/products/digital/file-upload', [VendorProductController::class, 'uploadDigitalProductFile'])->name('digital-products.file.upload');
-    Route::delete('/products/digital/{product}/{file}', [VendorProductController::class, 'destroyDigitalProductFile'])->name('digital-products.file.destroy');
+    Route::post('/products/digital/file-upload', [VendorDigitalProductFileController::class, 'store'])
+        ->middleware('throttle:300,1')
+        ->name('digital-products.file.upload');
+    Route::delete('/products/digital/{product}/{file}', [VendorDigitalProductFileController::class, 'destroy'])
+        ->name('digital-products.file.destroy');
     Route::delete('/products/{product}', [VendorProductController::class, 'destroy'])->name('products.destroy');
 });
 

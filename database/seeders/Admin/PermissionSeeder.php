@@ -55,6 +55,11 @@ class PermissionSeeder extends Seeder
                 'guard_name' => 'admin',
                 'group_name' => 'Products',
             ],
+            [
+                'name' => 'Store Auto-Approval Management',
+                'guard_name' => 'admin',
+                'group_name' => 'Products',
+            ],
         ];
 
         foreach ($permissions as $permission) {

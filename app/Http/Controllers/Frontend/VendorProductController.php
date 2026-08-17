@@ -3,30 +3,28 @@
 namespace App\Http\Controllers\Frontend;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\Admin\ProductStoreRequest;
-use App\Http\Requests\Admin\ProductUpdateRequest;
+use App\Http\Requests\Vendor\ProductStoreRequest;
+use App\Http\Requests\Vendor\ProductUpdateRequest;
+use App\Http\Requests\Vendor\ReorderProductImagesRequest;
 use App\Models\Attribute;
 use App\Models\AttributeValue;
 use App\Models\Brand;
 use App\Models\Category;
 use App\Models\Product;
-use App\Models\ProductFile;
 use App\Models\ProductImage;
 use App\Models\ProductVariant;
-use App\Models\Store;
 use App\Models\Tag;
 use App\Services\AlertService;
+use App\Services\ProductContentSanitizer;
+use App\Services\ProductModerationService;
 use App\Traits\FileUploadTrait;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Routing\Controllers\HasMiddleware;
-use Illuminate\Routing\Controllers\Middleware;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\ValidationException;
 
 class VendorProductController extends Controller
 {
@@ -34,13 +32,9 @@ class VendorProductController extends Controller
 
     public function index(): View|RedirectResponse
     {
-        $user = user();
+        Gate::authorize('viewAny', Product::class);
 
-        if (!$user->store) {
-            return redirect()
-                ->route('vendor.store-profile.index')
-                ->with('warning', 'You need to create your store before adding products.');
-        }
+        $user = user();
 
         $products = Product::where('store_id', $user->store->id)
             ->latest()
@@ -49,24 +43,28 @@ class VendorProductController extends Controller
         return view('vendor-dashboard.product.index', compact('products'));
     }
 
-    function create(): View
+    public function create(): View
     {
-        $stores = Store::select(['name', 'id'])->get();
+        Gate::authorize('create', Product::class);
+
         $brands = Brand::select(['name', 'id'])->get();
         $tags = Tag::select(['name', 'id'])->get();
         $categories = Category::getNested();
-        return view('vendor-dashboard.product.create', compact('stores', 'brands', 'tags', 'categories'));
+
+        return view('vendor-dashboard.product.create', compact('brands', 'tags', 'categories'));
     }
 
-    function store(ProductStoreRequest $request, string $type)
-    {
-        $product = DB::transaction(function () use ($request, $type) {
+    public function store(
+        ProductStoreRequest $request,
+        string $type,
+        ProductModerationService $moderation
+    ) {
+        abort_unless(in_array($type, ['physical', 'digital'], true), 404);
+        Gate::authorize('create', Product::class);
 
-            if (!in_array($type, ['physical', 'digital'])) {
-                abort(404);
-            }
+        $product = DB::transaction(function () use ($request, $type, $moderation) {
 
-            $product = new Product();
+            $product = new Product;
             $product->product_type = $type;
             $product->name = $request->name;
             $product->slug = $request->slug;
@@ -81,19 +79,21 @@ class VendorProductController extends Controller
             $product->manage_stock = $request->has('manage_stock') ? 'yes' : 'no';
             $product->in_stock = $request->stock_status == 'in_stock' ? 1 : 0;
             $product->status = $request->status;
-            $product->approved_status = 'pending';
             $product->brand_id = $request->brand;
-            $product->store_id = user()->store->id;
-            $product->is_featured = $request->has('is_featured') ? 1 : 0;
-            $product->is_hot = $request->has('is_hot') ? 1 : 0;
-            $product->is_new = $request->has('is_new') ? 1 : 0;
+            $product->store_id = $request->user()->store->id;
             $product->save();
 
             /** Attach categories */
-            $product->categories()->sync($request->categories);
+            $product->categories()->sync($request->validated('categories'));
 
             /** Attach tags */
-            $product->tags()->sync($request->tags);
+            $product->tags()->sync($request->validated('tags', []));
+
+            $moderation->submit(
+                $product,
+                $request->user(),
+                'Initial product submission by vendor.',
+            );
 
             return $product;
         });
@@ -102,347 +102,281 @@ class VendorProductController extends Controller
             return response()->json([
                 'id' => $product->id,
                 'status' => 'success',
-                'redirect_url' => route('vendor.products.edit', $product->id) . '#product-images',
-                'message' => 'Product created successfully.'
+                'redirect_url' => route('vendor.products.edit', $product->id).'#product-images',
+                'message' => 'Product created successfully.',
             ]);
         } else {
             return response()->json([
                 'id' => $product->id,
                 'status' => 'success',
-                'redirect_url' => route('vendor.digital-products.edit', $product->id) . '#product-images',
-                'message' => 'Product created successfully.'
+                'redirect_url' => route('vendor.digital-products.edit', $product->id).'#product-images',
+                'message' => 'Product created successfully.',
             ]);
         }
     }
 
-    function edit(int $id)
+    public function edit(Product $product, ProductContentSanitizer $sanitizer)
     {
-        $product = Product::findOrFail($id);
-        if ($product->store_id  !== user()->store->id) {
-            abort(404);
-        }
+        Gate::authorize('view', $product);
+        abort_unless($product->product_type === 'physical', 404);
+        $this->sanitizeContentForEditing($product, $sanitizer);
+
         $productCategoryIds = $product->categories->pluck('id')->toArray();
         $productTagIds = $product->tags->pluck('id')->toArray();
-        $stores = Store::select(['name', 'id'])->get();
         $brands = Brand::select(['name', 'id'])->get();
         $tags = Tag::select(['name', 'id'])->get();
         $categories = Category::getNested();
 
         $attributesWithValues = $product->attributeWithValues ?? [];
         $variants = $product?->variants ?? [];
-        return view('vendor-dashboard.product.edit', compact('stores', 'brands', 'tags', 'categories', 'product', 'productCategoryIds', 'productTagIds', 'attributesWithValues', 'variants'));
+
+        return view('vendor-dashboard.product.edit', compact('brands', 'tags', 'categories', 'product', 'productCategoryIds', 'productTagIds', 'attributesWithValues', 'variants'));
     }
 
-    function editDigital(int $id)
+    public function editDigital(Product $product, ProductContentSanitizer $sanitizer)
     {
-        $product = Product::findOrFail($id);
-        if ($product->product_type != 'digital') {
-            abort(404);
-        }
-        if ($product->store_id  !== user()->store->id) {
-            abort(404);
-        }
+        Gate::authorize('view', $product);
+        abort_unless($product->product_type === 'digital', 404);
+        $this->sanitizeContentForEditing($product, $sanitizer);
+
         $productCategoryIds = $product->categories->pluck('id')->toArray();
         $productTagIds = $product->tags->pluck('id')->toArray();
-        $stores = Store::select(['name', 'id'])->get();
         $brands = Brand::select(['name', 'id'])->get();
         $tags = Tag::select(['name', 'id'])->get();
         $categories = Category::getNested();
 
-        return view('vendor-dashboard.product.digital-edit', compact('stores', 'brands', 'tags', 'categories', 'product', 'productCategoryIds', 'productTagIds'));
+        return view('vendor-dashboard.product.digital-edit', compact('brands', 'tags', 'categories', 'product', 'productCategoryIds', 'productTagIds'));
     }
 
-    public function uploadDigitalProductFile(Request $request)
-    {
-        $product = Product::findOrFail($request->product_id);
-        if ($product->store_id !== user()->store->id) {
-            abort(404);
-        }
-
-        $file = $request->file('file');
-        $chunkIndex = (int) $request->dzchunkindex;
-        $totalChunks = (int) $request->dztotalchunkcount;
-        $fileName = basename($request->name);
-
-        $chunkFolder = storage_path('app/private/chunks/' . $fileName);
-
-        if (!File::exists($chunkFolder)) {
-            File::makeDirectory($chunkFolder, 0777, true);
-        }
-
-        $chunkPath = $chunkFolder . '/' . $chunkIndex;
-
-        file_put_contents(
-            $chunkPath,
-            file_get_contents($file->getRealPath())
-        );
-
-        /*
-     * No confiar en que chunkIndex == totalChunks - 1
-     * significa que todos los demás ya llegaron.
-     */
-        $uploadedChunks = glob($chunkFolder . '/*');
-
-        if (count($uploadedChunks) < $totalChunks) {
-            return response()->json([
-                'status' => 'chunk_received',
-                'chunk' => $chunkIndex,
-            ]);
-        }
-
-        // Todos los chunks están presentes.
-        $uploadsFolder = storage_path('app/private/uploads');
-
-        if (!File::exists($uploadsFolder)) {
-            File::makeDirectory($uploadsFolder, 0777, true);
-        }
-
-        $extension = $file->getClientOriginalExtension();
-
-        $storedFileName = \Str::uuid() . '.' . $extension;
-
-        $relativePath = 'uploads/' . $storedFileName;
-
-        $finalPath = storage_path(
-            'app/private/' . $relativePath
-        );
-
-        $output = fopen($finalPath, 'wb');
-
-        for ($i = 0; $i < $totalChunks; $i++) {
-            $chunkFile = $chunkFolder . '/' . $i;
-
-            if (!File::exists($chunkFile)) {
-                fclose($output);
-
-                return response()->json([
-                    'status' => 'error',
-                    'message' => "Missing chunk {$i}",
-                ], 422);
-            }
-
-            $input = fopen($chunkFile, 'rb');
-
-            stream_copy_to_stream($input, $output);
-
-            fclose($input);
-        }
-
-        fclose($output);
-
-        // Elimina chunks + carpeta.
-        File::deleteDirectory($chunkFolder);
-
-        $validationResponse = $this->validateFinalFile($finalPath);
-        if ($validationResponse !== true) {
-            unlink($finalPath);
-            return $validationResponse;
-        }
-
-        $relativePath = 'uploads/' . $storedFileName;
-
-        $productFile = new ProductFile();
-        $productFile->product_id = $request->product_id;
-        $productFile->filename = $fileName;
-        $productFile->path = $relativePath;
-        $productFile->extension = $extension;
-        $productFile->size = filesize($finalPath);
-        $productFile->save();
-
-        return response()->json([
-            'status' => 'success',
-        ]);
+    private function sanitizeContentForEditing(
+        Product $product,
+        ProductContentSanitizer $sanitizer
+    ): void {
+        $product->short_description = $sanitizer->sanitize($product->short_description);
+        $product->description = $sanitizer->sanitize($product->description);
     }
 
-    function validateFinalFile(string $finalPath)
-    {
-        $maxSizeMb = 1000;
-        $maxSizeBytes = $maxSizeMb * 1024 * 1024;
-
-        if (!file_exists($finalPath)) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'File not found',
-            ], 404);
-        }
-
-        if (filesize($finalPath) > $maxSizeBytes) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'File size limit exceeded',
-            ], 413);
-        }
-
-        // MIME validation
-        $finfo = finfo_open(FILEINFO_MIME_TYPE);
-        $mimeType = finfo_file($finfo, $finalPath);
-        finfo_close($finfo);
-
-        $allowedMimeTypes = [
-            'images' => [
-                'image/jpeg',
-                'image/png',
-                'image/gif',
-                'image/webp',
-                'image/avif',
-                'image/bmp',
-                'image/tiff',
-            ],
-
-            'documents' => [
-                'application/pdf',
-                'text/plain',
-                'text/csv',
-                'application/rtf',
-            ],
-
-            'microsoft_office' => [
-                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            ],
-
-            'open_document' => [
-                'application/vnd.oasis.opendocument.text',
-                'application/vnd.oasis.opendocument.spreadsheet',
-                'application/vnd.oasis.opendocument.presentation',
-            ],
-
-            'ebooks' => [
-                'application/epub+zip',
-            ],
-
-            'audio' => [
-                'audio/mpeg',
-                'audio/wav',
-                'audio/ogg',
-                'audio/flac',
-                'audio/mp4',
-                'audio/aac',
-            ],
-
-            'video' => [
-                'video/mp4',
-                'video/webm',
-                'video/ogg',
-                'video/quicktime',
-            ],
-
-            'archives' => [
-                'application/x-zip-compressed',
-                'application/zip',
-                'application/x-7z-compressed',
-            ],
-        ];
-
-        $allowedMimeTypesFlat = array_merge(...array_values($allowedMimeTypes));
-
-        if (!in_array($mimeType, $allowedMimeTypesFlat, true)) {
-            return response()->json([
-                'status' => 'error',
-                'message' => "Invalid file type: {$mimeType}",
-            ], 400);
-        }
-
-        return true;
-    }
-
-    function destroyDigitalProductFile(int $productId, int $id)
-    {
-        try {
-            $product = Product::findOrFail($productId);
-            if ($product->store_id !== user()->store->id) {
-                abort(404);
-            }
-            $productFile = ProductFile::where('id', $id)->where('product_id', $productId)->first();
-            //delete from storage
-            if (Storage::disk('local')->exists($productFile->path)) {
-                Storage::disk('local')->delete($productFile->path);
-            }
-            $productFile->delete();
-            return response()->json(['status' => 'success', 'message' => 'File deleted successfully']);
-        } catch (\Exception $e) {
-            logger('Failed to delete file: ' . $e);
-            return response()->json(['status' => 'error', 'message' => $e->getMessage()]);
-        }
-    }
-
-    function uploadImages(Request $request, Product $product)
-    {
-        if ($product->store_id !== user()->store->id) {
-            abort(404);
-        }
+    public function uploadImages(
+        Request $request,
+        Product $product,
+        ProductModerationService $moderation
+    ) {
+        Gate::authorize('uploadImages', $product);
 
         $request->validate([
-            'image' => ['required', 'image', 'max:3048']
+            'image' => ['required', 'image', 'max:3048'],
         ]);
 
         $filePath = $this->uploadFile($request->file('image'));
+        abort_if($filePath === null, 422, 'The image could not be stored.');
 
-        $productImage = new ProductImage();
-        $productImage->product_id = $product->id;
-        $productImage->path = $filePath;
-        $productImage->order = ProductImage::where('product_id', $product->id)->max('order') + $product->id;
-        $productImage->save();
+        try {
+            $productImage = DB::transaction(function () use (
+                $product,
+                $filePath,
+                $moderation,
+                $request
+            ): ProductImage {
+                $lockedProduct = $this->lockProductForMutation($product, 'uploadImages');
+
+                $productImage = new ProductImage;
+                $productImage->product_id = $lockedProduct->getKey();
+                $productImage->path = $filePath;
+                $productImage->order = ((int) ProductImage::query()
+                    ->where('product_id', $lockedProduct->getKey())
+                    ->max('order')) + 1;
+                $productImage->save();
+
+                $moderation->markForReview(
+                    $lockedProduct,
+                    $request->user(),
+                    'Product images changed by vendor.',
+                );
+
+                return $productImage;
+            });
+        } catch (\Throwable $exception) {
+            $this->deleteFile($filePath);
+
+            throw $exception;
+        }
 
         return response()->json([
             'status' => 'success',
             'id' => $productImage->id,
             'path' => asset($filePath),
-            'message' => 'Image uploaded successfully.'
+            'message' => 'Image uploaded successfully.',
         ]);
     }
 
-    function destroyImage(int $id)
+    public function destroyImage(ProductImage $image, ProductModerationService $moderation)
     {
-        $image = ProductImage::findOrFail($id);
-        $product = Product::findOrFail($image->product_id);
-        if ($product->store_id !== user()->store->id) {
-            abort(404);
-        }
-        $this->deleteFile($image->path);
-        $image->delete();
+        $initialProduct = Product::query()->findOrFail($image->product_id);
+        Gate::authorize('uploadImages', $initialProduct);
+
+        $imagePath = DB::transaction(function () use ($image, $moderation): string {
+            $product = Product::query()
+                ->whereKey($image->product_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            Gate::authorize('uploadImages', $product);
+
+            $lockedImage = ProductImage::query()
+                ->whereKey($image->getKey())
+                ->where('product_id', $product->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+            $imagePath = (string) $lockedImage->path;
+            $lockedImage->delete();
+
+            $moderation->markForReview(
+                $product,
+                request()->user(),
+                'Product images changed by vendor.',
+            );
+
+            return $imagePath;
+        });
+        $this->deleteFile($imagePath);
+
         return response()->json(['status' => 'success', 'message' => 'Image deleted successfully.']);
     }
 
-    function imagesReorder(Request $request)
-    {
-        foreach ($request->images as $image) {
-            ProductImage::where('id', $image['id'])->update(['order' => $image['order']]);
-        }
+    public function imagesReorder(
+        ReorderProductImagesRequest $request,
+        ProductModerationService $moderation
+    ) {
+        $images = $request->validated('images');
+        $firstImage = ProductImage::query()->findOrFail($images[0]['id']);
+        $initialProduct = Product::query()->findOrFail($firstImage->product_id);
+        Gate::authorize('reorderImages', $initialProduct);
+
+        DB::transaction(function () use ($images, $firstImage, $request, $moderation): void {
+            $product = Product::query()
+                ->whereKey($firstImage->product_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            Gate::authorize('reorderImages', $product);
+
+            $storedImages = ProductImage::query()
+                ->where('product_id', $product->id)
+                ->whereIn('id', collect($images)->pluck('id'))
+                ->lockForUpdate()
+                ->get()
+                ->keyBy(fn (ProductImage $image): int => (int) $image->getKey());
+            abort_unless($storedImages->count() === count($images), 404);
+            $hasMaterialChanges = false;
+
+            foreach ($images as $image) {
+                $storedImage = $storedImages->get((int) $image['id']);
+                abort_if($storedImage === null, 404);
+
+                if ((int) $storedImage->order === (int) $image['order']) {
+                    continue;
+                }
+
+                $storedImage->update(['order' => $image['order']]);
+                $hasMaterialChanges = true;
+            }
+
+            if ($hasMaterialChanges) {
+                $moderation->markForReview(
+                    $product,
+                    $request->user(),
+                    'Product images reordered by vendor.',
+                );
+            }
+        });
+
+        return response()->noContent();
     }
 
-    function update(ProductUpdateRequest $request, int $id)
-    {
-        $product = Product::findOrFail($id);
-        if ($product->store_id !== user()->store->id) {
-            abort(404);
-        }
-        $product->name = $request->name;
-        $product->slug = $request->slug;
-        $product->short_description = $request->short_description;
-        $product->sku = $request->sku;
-        $product->description = $request->content;
-        $product->price = $request->price;
-        $product->special_price = $request->special_price;
-        $product->special_price_start = $request->from_date;
-        $product->special_price_end = $request->to_date;
-        $product->qty = $request->quantity;
-        $product->manage_stock = $request->has('manage_stock') ? 'yes' : 'no';
-        $product->in_stock = $request->stock_status == 'in_stock' ? 1 : 0;
-        $product->status = $request->status;
-        $product->brand_id = $request->brand;
-        $product->store_id = user()->store->id;
-        $product->is_featured = $request->has('is_featured') ? 1 : 0;
-        $product->is_hot = $request->has('is_hot') ? 1 : 0;
-        $product->is_new = $request->has('is_new') ? 1 : 0;
-        $product->save();
+    public function update(
+        ProductUpdateRequest $request,
+        Product $product,
+        ProductModerationService $moderation
+    ) {
+        DB::transaction(function () use (
+            $request,
+            $product,
+            $moderation
+        ): void {
+            $product = $this->lockProductForMutation($product, 'update');
+            $originalCategoryIds = $product->categories()
+                ->pluck('categories.id')
+                ->map(fn ($id): int => (int) $id)
+                ->sort()
+                ->values()
+                ->all();
+            $originalTagIds = $product->tags()
+                ->pluck('tags.id')
+                ->map(fn ($id): int => (int) $id)
+                ->sort()
+                ->values()
+                ->all();
 
-        /** Attach categories */
-        $product->categories()->sync($request->categories);
+            $product->name = $request->name;
+            $product->slug = $request->slug;
+            $product->short_description = $request->short_description;
+            $product->sku = $request->sku;
+            $product->description = $request->content;
+            $product->price = $request->price;
+            $product->special_price = $request->special_price;
+            $product->special_price_start = $request->from_date;
+            $product->special_price_end = $request->to_date;
+            $product->qty = $request->quantity;
+            $product->manage_stock = $request->has('manage_stock') ? 'yes' : 'no';
+            $product->in_stock = $request->stock_status == 'in_stock' ? 1 : 0;
+            $product->status = $request->status;
+            $product->brand_id = $request->brand;
 
-        /** Attach tags */
-        $product->tags()->sync($request->tags);
+            $hasMaterialChanges = $product->isDirty([
+                'name',
+                'slug',
+                'short_description',
+                'description',
+                'sku',
+                'price',
+                'special_price',
+                'special_price_start',
+                'special_price_end',
+                'brand_id',
+                'manage_stock',
+                'qty',
+                'in_stock',
+                'status',
+            ]);
+
+            $product->save();
+
+            /** Attach categories */
+            $categoryIds = collect($request->validated('categories'))
+                ->map(fn ($id): int => (int) $id)
+                ->sort()
+                ->values()
+                ->all();
+            $product->categories()->sync($categoryIds);
+
+            /** Attach tags */
+            $tagIds = collect($request->validated('tags', []))
+                ->map(fn ($id): int => (int) $id)
+                ->sort()
+                ->values()
+                ->all();
+            $product->tags()->sync($tagIds);
+
+            $hasMaterialChanges = $hasMaterialChanges
+                || $originalCategoryIds !== $categoryIds
+                || $originalTagIds !== $tagIds;
+
+            if ($hasMaterialChanges) {
+                $moderation->markForReview(
+                    $product,
+                    $request->user(),
+                    'Material product details changed by vendor.',
+                );
+            }
+        });
 
         AlertService::created();
 
@@ -450,28 +384,32 @@ class VendorProductController extends Controller
             'id' => $product->id,
             'status' => 'success',
             'message' => 'Product updated successfully.',
-            'redirect_url' => route('vendor.products.index')
+            'redirect_url' => route('vendor.products.index'),
         ]);
     }
 
-    function storeAttributes(Request $request, Product $product)
-    {
-        if ($product->store_id !== user()->store->id) {
-            abort(404);
-        }
+    public function storeAttributes(
+        Request $request,
+        Product $product,
+        ProductModerationService $moderation
+    ) {
+        Gate::authorize('manageAttributes', $product);
+        $maxValuesPerAttribute = $this->variantLimit('max_values_per_attribute');
+
         $validated = $request->validate([
             'attribute_id' => ['nullable', 'integer'],
             'attribute_name' => ['required', 'string', 'max:255'],
             'attribute_type' => ['required', 'string', 'in:text,color'],
-            'label' => ['required', 'array', 'min:1'],
+            'label' => ['required', 'array', 'min:1', 'max:'.$maxValuesPerAttribute],
             'label.*' => ['required', 'string', 'max:255'],
-            'value_id' => ['nullable', 'array'],
+            'value_id' => ['nullable', 'array', 'max:'.$maxValuesPerAttribute],
             'value_id.*' => ['nullable', 'integer', 'distinct'],
-            'color_value' => ['nullable', 'array'],
+            'color_value' => ['nullable', 'array', 'max:'.$maxValuesPerAttribute],
             'color_value.*' => ['nullable', 'string', 'max:32'],
         ]);
 
-        $result = DB::transaction(function () use ($validated, $request, $product) {
+        $result = DB::transaction(function () use ($validated, $request, $product, $moderation) {
+            $product = $this->lockProductForMutation($product, 'manageAttributes');
             $attributeId = $validated['attribute_id'] ?? null;
             $isUpdate = filled($attributeId);
 
@@ -483,8 +421,9 @@ class VendorProductController extends Controller
 
                 abort_unless($belongsToProduct, 404);
                 $attribute = Attribute::findOrFail($attributeId);
+                $this->assertAttributeIsNotSharedWithAnotherProduct($attribute, $product);
             } else {
-                $attribute = new Attribute();
+                $attribute = new Attribute;
             }
 
             $attribute->name = $validated['attribute_name'];
@@ -494,10 +433,15 @@ class VendorProductController extends Controller
             $values = $this->syncAttributeValues($attribute, $request, $product);
             $this->regenerateProductVariants($product);
 
+            $moderation->markForReview(
+                $product,
+                $request->user(),
+                'Product attributes changed by vendor.',
+            );
+
             return compact('attribute', 'values', 'isUpdate');
         });
         $variantsHtml = $this->renderProductVariants($product);
-
 
         return response()->json([
             'status' => 'success',
@@ -507,15 +451,14 @@ class VendorProductController extends Controller
             'has_attributes' => $product->attributes()->exists(),
             'message' => $result['isUpdate']
                 ? 'Attribute updated successfully.'
-                : 'Attribute created successfully.'
+                : 'Attribute created successfully.',
         ]);
     }
 
     private function renderProductVariants(Product $product): string
     {
-        if ($product->store_id !== user()->store->id) {
-            abort(404);
-        }
+        Gate::authorize('manageVariants', $product);
+
         $variants = $product->variants()
             ->orderBy('id')
             ->get();
@@ -523,11 +466,11 @@ class VendorProductController extends Controller
         return view('vendor-dashboard.product.partials.variants', compact('variants'))->render();
     }
 
-    function syncAttributeValues(Attribute $attribute, Request $request, Product $product): array
+    public function syncAttributeValues(Attribute $attribute, Request $request, Product $product): array
     {
-        if ($product->store_id !== user()->store->id) {
-            abort(404);
-        }
+        Gate::authorize('manageAttributes', $product);
+        $this->assertAttributeIsNotSharedWithAnotherProduct($attribute, $product);
+
         $labels = $request->input('label', []);
         $valueIds = $request->input('value_id', []);
         $colors = $request->input('color_value', []);
@@ -544,13 +487,14 @@ class VendorProductController extends Controller
                     ->exists();
 
                 abort_unless($belongsToProduct, 404);
+                $this->assertAttributeValueIsNotSharedWithAnotherProduct((int) $valueId, $product);
 
                 $attributeValue = AttributeValue::query()
                     ->whereKey($valueId)
                     ->where('attribute_id', $attribute->id)
                     ->firstOrFail();
             } else {
-                $attributeValue = new AttributeValue();
+                $attributeValue = new AttributeValue;
                 $attributeValue->attribute_id = $attribute->id;
             }
 
@@ -563,7 +507,7 @@ class VendorProductController extends Controller
             DB::table('product_attribute_values')->updateOrInsert([
                 'product_id' => $product->id,
                 'attribute_id' => $attribute->id,
-                'attribute_value_id' => $attributeValue->id
+                'attribute_value_id' => $attributeValue->id,
             ]);
 
             $savedValues[] = $attributeValue;
@@ -592,12 +536,52 @@ class VendorProductController extends Controller
         return $savedValues;
     }
 
-    public function destroyAttribute(Product $product, Attribute $attribute)
-    {
-        if ($product->store_id !== user()->store->id) {
-            abort(404);
-        }
-        return DB::transaction(function () use ($product, $attribute) {
+    private function assertAttributeIsNotSharedWithAnotherProduct(
+        Attribute $attribute,
+        Product $product
+    ): void {
+        $isSharedWithAnotherProduct = DB::table('product_attribute_values as product_values')
+            ->where('product_values.attribute_id', $attribute->getKey())
+            ->where('product_values.product_id', '!=', $product->getKey())
+            ->exists();
+
+        abort_if(
+            $isSharedWithAnotherProduct,
+            403,
+            'This attribute is shared with another product and cannot be edited.'
+        );
+    }
+
+    private function assertAttributeValueIsNotSharedWithAnotherProduct(
+        int $attributeValueId,
+        Product $product
+    ): void {
+        $isSharedWithAnotherProduct = DB::table('product_attribute_values as product_values')
+            ->where('product_values.attribute_value_id', $attributeValueId)
+            ->where('product_values.product_id', '!=', $product->getKey())
+            ->exists();
+
+        abort_if(
+            $isSharedWithAnotherProduct,
+            403,
+            'This attribute value is shared with another product and cannot be edited.'
+        );
+    }
+
+    public function destroyAttribute(
+        Product $product,
+        Attribute $attribute,
+        ProductModerationService $moderation
+    ) {
+        Gate::authorize('manageAttributes', $product);
+
+        return DB::transaction(function () use ($product, $attribute, $moderation) {
+            $product = $this->lockProductForMutation($product, 'manageAttributes');
+            $attribute = Attribute::query()
+                ->whereKey($attribute->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
             // Elimina todos los valores asociados en la tabla pivot para este producto y atributo
             $belongsToProduct = DB::table('product_attribute_values')
                 ->where('product_id', $product->id)
@@ -616,7 +600,7 @@ class VendorProductController extends Controller
                 ->where('attribute_id', $attribute->id)
                 ->exists();
 
-            if (!$isUsedElsewhere) {
+            if (! $isUsedElsewhere) {
                 // Primero borra sus valores
                 AttributeValue::where('attribute_id', $attribute->id)->delete();
                 // Luego borra el atributo
@@ -626,8 +610,14 @@ class VendorProductController extends Controller
             $this->regenerateProductVariants($product);
             $variantsHtml = $this->renderProductVariants($product);
 
+            $moderation->markForReview(
+                $product,
+                request()->user(),
+                'Product attributes changed by vendor.',
+            );
+
             return response()->json([
-                'status'  => 'success',
+                'status' => 'success',
                 'message' => 'Attribute removed successfully.',
                 'variants_html' => $variantsHtml,
                 'has_attributes' => $product->attributes()->exists(),
@@ -636,31 +626,32 @@ class VendorProductController extends Controller
         });
     }
 
-    function regenerateProductVariants(Product $product)
+    public function regenerateProductVariants(Product $product)
     {
-        if ($product->store_id !== user()->store->id) {
-            abort(404);
-        }
-        // clear existing variants
-        $this->clearExistingVariants($product);
+        Gate::authorize('manageAttributes', $product);
 
-        // get current attribute values group by attributes
         $attributeGroups = $this->getAttributeGroups($product);
+        $this->validateVariantCombinationLimits($attributeGroups);
 
         if ($attributeGroups->isEmpty()) {
+            $this->clearExistingVariants($product);
+
             return;
         }
 
         $combinations = $this->cartesianProduct($attributeGroups);
 
+        $this->clearExistingVariants($product);
         $this->createVariantsFromCombinations($product, $combinations);
     }
 
-    public function updateVariants(Request $request, Product $product)
-    {
-        if ($product->store_id !== user()->store->id) {
-            abort(404);
-        }
+    public function updateVariants(
+        Request $request,
+        Product $product,
+        ProductModerationService $moderation
+    ) {
+        Gate::authorize('manageVariants', $product);
+
         $variantId = $request->integer('variant_id');
 
         $request->merge([
@@ -689,11 +680,16 @@ class VendorProductController extends Controller
                 'required',
                 'numeric',
                 'min:0',
+                'max:99999999.99',
+                'decimal:0,2',
             ],
             'variant_special_price' => [
                 'nullable',
                 'numeric',
                 'min:0',
+                'max:99999999.99',
+                'decimal:0,2',
+                'lte:variant_price',
             ],
             'variant_manage_stock' => [
                 'required',
@@ -703,6 +699,7 @@ class VendorProductController extends Controller
                 'nullable',
                 'integer',
                 'min:0',
+                'max:2147483647',
                 'required_if:variant_manage_stock,1',
             ],
             'variant_stock_status' => [
@@ -719,27 +716,48 @@ class VendorProductController extends Controller
             ],
         ]);
 
-        // Garantiza que la variante pertenezca al producto actual.
-        $variant = $product->variants()
-            ->whereKey($validated['variant_id'])
-            ->firstOrFail();
+        $variant = DB::transaction(function () use (
+            $validated,
+            $moderation,
+            $product,
+            $request
+        ): ProductVariant {
+            $product = $this->lockProductForMutation($product, 'manageVariants');
 
-        $variant->sku = $validated['variant_sku'] ?? null;
-        $variant->price = $validated['variant_price'];
-        $variant->special_price = $validated['variant_special_price'] ?? null;
-        $variant->manage_stock = $validated['variant_manage_stock'];
+            // Garantiza que la variante pertenezca al producto bloqueado actual.
+            $variant = $product->variants()
+                ->whereKey($validated['variant_id'])
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        $variant->qty = $validated['variant_manage_stock']
-            ? ($validated['variant_quantity'] ?? 0)
-            : null;
+            $variant->sku = $validated['variant_sku'] ?? null;
+            $variant->price = $validated['variant_price'];
+            $variant->special_price = $validated['variant_special_price'] ?? null;
+            $variant->manage_stock = $validated['variant_manage_stock'];
 
-        $variant->in_stock =
-            $validated['variant_stock_status'] === 'in_stock';
+            $variant->qty = $validated['variant_manage_stock']
+                ? ($validated['variant_quantity'] ?? 0)
+                : null;
 
-        $variant->is_default = $validated['variant_is_default'];
-        $variant->is_active = $validated['variant_is_active'];
+            $variant->in_stock =
+                $validated['variant_stock_status'] === 'in_stock';
 
-        $variant->save();
+            $variant->is_default = $validated['variant_is_default'];
+            $variant->is_active = $validated['variant_is_active'];
+
+            $hasMaterialChanges = $variant->isDirty();
+            $variant->save();
+
+            if ($hasMaterialChanges) {
+                $moderation->markForReview(
+                    $product,
+                    $request->user(),
+                    'Product variants changed by vendor.',
+                );
+            }
+
+            return $variant;
+        });
 
         return response()->json([
             'status' => 'success',
@@ -755,11 +773,10 @@ class VendorProductController extends Controller
         ]);
     }
 
-    function clearExistingVariants(Product $product)
+    public function clearExistingVariants(Product $product)
     {
-        if ($product->store_id !== user()->store->id) {
-            abort(404);
-        }
+        Gate::authorize('manageVariants', $product);
+
         foreach ($product->variants as $variant) {
             DB::table('product_variant_attribute_value')
                 ->where('product_variant_id', $variant->id)
@@ -769,11 +786,10 @@ class VendorProductController extends Controller
         }
     }
 
-    function getAttributeGroups(Product $product)
+    public function getAttributeGroups(Product $product)
     {
-        if ($product->store_id !== user()->store->id) {
-            abort(404);
-        }
+        Gate::authorize('manageAttributes', $product);
+
         $groupedAttributes = DB::table('product_attribute_values')
             ->where('product_id', $product->id)
             ->get()->groupBy('attribute_id');
@@ -785,12 +801,64 @@ class VendorProductController extends Controller
             $attributeGroups->push($attributeValues);
         }
 
-
         return $attributeGroups;
     }
 
-    function cartesianProduct(Collection $attributeGroups)
+    private function validateVariantCombinationLimits(Collection $attributeGroups): void
     {
+        $maxGroups = $this->variantLimit('max_attribute_groups');
+        $maxValues = $this->variantLimit('max_values_per_attribute');
+        $maxCombinations = $this->variantLimit('max_combinations');
+
+        if ($attributeGroups->count() > $maxGroups) {
+            throw ValidationException::withMessages([
+                'attributes' => 'Too many variant attributes.',
+            ]);
+        }
+
+        $combinationCount = 1;
+
+        foreach ($attributeGroups as $attributeValues) {
+            $valueCount = is_countable($attributeValues) ? count($attributeValues) : 0;
+
+            if ($valueCount > $maxValues) {
+                throw ValidationException::withMessages([
+                    'label' => 'Too many values for a variant attribute.',
+                ]);
+            }
+
+            if ($valueCount === 0) {
+                $combinationCount = 0;
+
+                continue;
+            }
+
+            if ($combinationCount > intdiv($maxCombinations, $valueCount)) {
+                throw ValidationException::withMessages([
+                    'attributes' => 'Too many variant combinations.',
+                ]);
+            }
+
+            $combinationCount *= $valueCount;
+        }
+    }
+
+    private function variantLimit(string $key): int
+    {
+        $default = match ($key) {
+            'max_values_per_attribute' => 50,
+            'max_attribute_groups' => 6,
+            'max_combinations' => 500,
+            default => 1,
+        };
+
+        return max(1, (int) config('products.variants.'.$key, $default));
+    }
+
+    public function cartesianProduct(Collection $attributeGroups): array
+    {
+        $this->validateVariantCombinationLimits($attributeGroups);
+
         $result = [[]];
         foreach ($attributeGroups as $attributeValues) {
             $temp = [];
@@ -806,52 +874,64 @@ class VendorProductController extends Controller
         return $result;
     }
 
-    function createVariantsFromCombinations(Product $product, array $combinations)
+    public function createVariantsFromCombinations(Product $product, array $combinations)
     {
-        if ($product->store_id !== user()->store->id) {
-            abort(404);
-        }
+        Gate::authorize('manageVariants', $product);
+
         foreach ($combinations as $combination) {
             $variant = $this->createSingleVariant($product, $combination);
             $this->attachAttributesToVariant($variant, $combination);
         }
     }
 
-    function createSingleVariant(Product $product, array $combination)
+    public function createSingleVariant(Product $product, array $combination)
     {
-        if ($product->store_id !== user()->store->id) {
-            abort(404);
-        }
+        Gate::authorize('manageVariants', $product);
+
         $variantName = collect($combination)->pluck('value')->implode('/');
+
         return ProductVariant::create([
             'product_id' => $product->id,
             'name' => $variantName,
             'price' => 0,
             'sku' => '',
-            'qty' => 0
+            'qty' => 0,
         ]);
     }
 
-    function attachAttributesToVariant(ProductVariant $variant, array $combination)
+    public function attachAttributesToVariant(ProductVariant $variant, array $combination)
     {
         foreach ($combination as $attributeValue) {
             DB::table('product_variant_attribute_value')->insert([
                 'product_variant_id' => $variant->id,
                 'attribute_id' => $attributeValue->attribute_id,
-                'attribute_value_id' => $attributeValue->id
+                'attribute_value_id' => $attributeValue->id,
             ]);
         }
     }
 
-    function destroy(Product $product)
+    public function destroy(Product $product)
     {
-        if (Auth::user()->store->id == $product->store_id) {
-            $product->delete();
-            notyf()->success('Product deleted successfully');
-            return response()->json(['status' => 'success', 'message' => 'Product deleted successfully']);
-        }
+        Gate::authorize('delete', $product);
 
-        notyf()->error('You do not have permission to delete this product');
-        return response()->json(['status' => 'error', 'message' => 'You do not have permission to delete this product']);
+        DB::transaction(function () use ($product): void {
+            $product = $this->lockProductForMutation($product, 'delete');
+            $product->delete();
+        });
+        notyf()->success('Product deleted successfully');
+
+        return response()->json(['status' => 'success', 'message' => 'Product deleted successfully']);
+    }
+
+    private function lockProductForMutation(Product $product, string $ability): Product
+    {
+        $lockedProduct = Product::query()
+            ->whereKey($product->getKey())
+            ->lockForUpdate()
+            ->firstOrFail();
+
+        Gate::authorize($ability, $lockedProduct);
+
+        return $lockedProduct;
     }
 }

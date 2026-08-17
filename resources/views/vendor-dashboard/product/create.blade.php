@@ -131,7 +131,7 @@
                                     <label class="form-label required">Name</label>
                                     <input type="text" class="form-control" name="name" placeholder=""
                                         value="{{ old('name') }}" id="name">
-                                    <input type="hidden" name="store" value="{{ user()->store->id }}">
+
                                     <x-input-error :messages="$errors->get('name')" class="mt-2" />
                                 </div>
                             </div>
@@ -296,22 +296,6 @@
 
                     <div class="card mb-3">
                         <div class="card-header">
-                            <h3 class="card-title">Is Featured</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="col-md-12">
-                                <div class="mb-3">
-                                    <label class="form-check form-switch form-switch-3">
-                                        <input class="form-check-input" type="checkbox" name="is_featured">
-                                        <span class="form-check-label">Enable</span>
-                                    </label>
-                                    <x-input-error :messages="$errors->get('is_featured')" class="mt-2" />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="card mb-3">
-                        <div class="card-header">
                             <h3 class="card-title">Categories</h3>
                         </div>
                         <div class="card-body category-scroll">
@@ -385,27 +369,6 @@
                         </div>
                     </div>
                     <div class="card mb-3">
-                        <div class="card-header">
-                            <h3 class="card-title">Label</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="col-md-12">
-                                <div class="mb-3">
-                                    <div class="product-label-options">
-                                        <label class="form-check">
-                                            <input class="form-check-input" type="checkbox" name="is_hot">
-                                            <span class="form-check-label">Hot</span>
-                                        </label>
-                                        <label class="form-check">
-                                            <input class="form-check-input" type="checkbox" name="is_new">
-                                            <span class="form-check-label">New</span>
-                                        </label>
-                                    </div>
-                                    {{-- <x-input-error :messages="$errors->get('brand')" class="mt-2" /> --}}
-                                </div>
-                            </div>
-                        </div>
-
                         <div class="card-header">
                             <h3 class="card-title">Tags</h3>
                         </div>

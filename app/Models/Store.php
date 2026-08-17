@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Store extends Model
@@ -37,6 +38,7 @@ class Store extends Model
             'social_links' => 'array',
             'settings' => 'array',
             'is_featured' => 'boolean',
+            'auto_approve_products' => 'boolean',
             'approved_at' => 'datetime',
             'suspended_at' => 'datetime',
         ];
@@ -45,5 +47,15 @@ class Store extends Model
     public function seller(): BelongsTo
     {
         return $this->belongsTo(User::class, 'seller_id');
+    }
+
+    public function products(): HasMany
+    {
+        return $this->hasMany(Product::class);
+    }
+
+    public function autoApprovalAudits(): HasMany
+    {
+        return $this->hasMany(StoreAutoApprovalAudit::class);
     }
 }

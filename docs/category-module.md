@@ -226,7 +226,7 @@ php artisan test tests/Feature/Admin/CategoryManagementTest.php
 
 Recomendaciones para futuras evoluciones:
 
-- Agregar permisos especificos como `Category Management` cuando el panel tenga control granular por modulo.
+- Mantener las rutas protegidas con el permiso existente `Category Management` y asignarlo solo a los roles que administran el catalogo.
 - Si se agregan imagenes o iconos, mover la subida a un request/servicio dedicado y validar peso, extension y storage.
 - Si el catalogo crece mucho, considerar paginacion/busqueda para el panel admin y cache para el arbol publico.
 - Definir una estrategia para reutilizar slugs despues de soft delete si el negocio lo necesita.

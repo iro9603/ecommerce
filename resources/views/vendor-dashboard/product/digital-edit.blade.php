@@ -183,7 +183,7 @@
                                     <label class="form-label required">Name</label>
                                     <input type="text" class="form-control" name="name" placeholder=""
                                         value="{{ $product->name }}" id="name">
-                                    <input type="hidden" name="store" value="{{ user()->store->id }}">
+
                                     <x-input-error :messages="$errors->get('name')" class="mt-2" />
                                 </div>
                             </div>
@@ -198,14 +198,14 @@
                             <div class="col-md-12">
                                 <div class="mb-3">
                                     <label class="form-label required">Short Description</label>
-                                    <textarea name="short_description" id="short-editor" cols="30" rows="10">{!! $product->short_description !!}</textarea>
+                                    <textarea name="short_description" id="short-editor" cols="30" rows="10">{{ old('short_description', $product->short_description) }}</textarea>
                                     <x-input-error :messages="$errors->get('short_description')" class="mt-2" />
                                 </div>
                             </div>
                             <div class="col-md-12">
                                 <div class="mb-3">
                                     <label class="form-label required">Content</label>
-                                    <textarea name="content" id="editor" cols="30" rows="10">{!! $product->description !!}</textarea>
+                                    <textarea name="content" id="editor" cols="30" rows="10">{{ old('content', $product->description) }}</textarea>
                                     <x-input-error :messages="$errors->get('content')" class="mt-2" />
                                 </div>
                             </div>
@@ -390,23 +390,6 @@
 
                     <div class="card mb-3">
                         <div class="card-header">
-                            <h3 class="card-title">Is Featured</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="col-md-12">
-                                <div class="mb-3">
-                                    <label class="form-check form-switch form-switch-3">
-                                        <input class="form-check-input" @checked($product->is_featured == 1) type="checkbox"
-                                            name="is_featured">
-                                        <span class="form-check-label">Enable</span>
-                                    </label>
-                                    <x-input-error :messages="$errors->get('is_featured')" class="mt-2" />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="card mb-3">
-                        <div class="card-header">
                             <h3 class="card-title">Categories</h3>
                         </div>
                         <div class="card-body category-scroll">
@@ -484,28 +467,6 @@
                         </div>
                     </div>
                     <div class="card mb-3">
-                        <div class="card-header">
-                            <h3 class="card-title">Label</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="col-md-12">
-                                <div class="mb-3">
-                                    <div class="product-label-options">
-                                        <label class="form-check">
-                                            <input class="form-check-input" type="checkbox" name="is_hot"
-                                                @checked($product->is_hot)>
-                                            <span class="form-check-label">Hot</span>
-                                        </label>
-                                        <label class="form-check">
-                                            <input class="form-check-input" type="checkbox" name="is_new"
-                                                @checked($product->is_new)>
-                                            <span class="form-check-label">New</span>
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
                         <div class="card-header">
                             <h3 class="card-title">Tags</h3>
                         </div>
@@ -682,7 +643,7 @@
         const fileUploader = new Dropzone("#fileUploader", {
             url: "{{ route('vendor.digital-products.file.upload') }}",
             paramName: "file",
-            maxFilesize: 1024,
+            maxFilesize: {{ (int) ceil(config('products.digital_upload.max_file_size_kb') / 1024) }},
             chunking: true,
             forceChunking: true,
             chunkSize: 1024 * 1024, // 1MB per Chunk

@@ -6,6 +6,8 @@ use App\Models\Category;
 use App\Models\Product;
 use App\Models\Store;
 use App\Models\User;
+use Illuminate\Database\QueryException;
+use Spatie\Permission\Models\Permission;
 
 beforeEach(function () {
     $this->admin = Admin::forceCreate([
@@ -14,6 +16,9 @@ beforeEach(function () {
         'email_verified_at' => now(),
         'password' => 'password',
     ]);
+    $this->admin->givePermissionTo(
+        Permission::findOrCreate('Product Management', 'admin')
+    );
 
     $seller = User::factory()->create();
 
@@ -63,6 +68,8 @@ function productUpdatePayload(Product $product, array $overrides = []): array
         'price' => $product->price,
         'stock_status' => 'in_stock',
         'status' => 'active',
+        'approved_status' => Product::APPROVAL_PENDING,
+        'moderation_version' => (int) $product->moderation_version,
         'store' => test()->store->id,
         'categories' => [test()->category->id],
         'brand' => test()->brand->id,
@@ -97,4 +104,40 @@ test('a product slug must be unique when it is updated', function () {
         ->assertJsonValidationErrors('slug');
 
     expect($product->fresh()->slug)->toBe('first-product');
+});
+
+test('the database prevents product slug races from creating duplicates', function () {
+    productForSlugTest('First Product', 'database-unique-product');
+
+    expect(fn () => productForSlugTest('Concurrent Product', 'database-unique-product'))
+        ->toThrow(QueryException::class);
+});
+
+test('a stale admin review cannot overwrite a newer product version', function () {
+    $product = productForSlugTest('Current Product', 'current-product');
+    $product->forceFill([
+        'description' => 'Current reviewed content.',
+        'price' => 50,
+        'approved_status' => Product::APPROVAL_PENDING,
+        'moderation_version' => 2,
+        'reviewed_version' => null,
+    ])->save();
+
+    $this
+        ->actingAs($this->admin, 'admin')
+        ->postJson(route('admin.products.update', $product), productUpdatePayload($product, [
+            'content' => 'Stale content must not win.',
+            'price' => 1,
+            'approved_status' => Product::APPROVAL_APPROVED,
+            'moderation_version' => 1,
+        ]))
+        ->assertStatus(409);
+
+    $product->refresh();
+
+    expect($product->description)->toBe('Current reviewed content.')
+        ->and((float) $product->price)->toBe(50.0)
+        ->and($product->approved_status)->toBe(Product::APPROVAL_PENDING)
+        ->and($product->moderation_version)->toBe(2)
+        ->and($product->reviewed_version)->toBeNull();
 });

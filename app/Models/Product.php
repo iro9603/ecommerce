@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -13,37 +14,74 @@ class Product extends Model
 {
     use SoftDeletes;
 
-    function categories(): BelongsToMany
+    public const APPROVAL_PENDING = 'pending';
+
+    public const APPROVAL_APPROVED = 'approved';
+
+    public const APPROVAL_REJECTED = 'rejected';
+
+    protected function casts(): array
+    {
+        return [
+            'submitted_at' => 'datetime',
+            'approved_at' => 'datetime',
+            'moderation_version' => 'integer',
+            'reviewed_version' => 'integer',
+            'risk_score' => 'integer',
+        ];
+    }
+
+    public function scopePublished(Builder $query): Builder
+    {
+        return $query
+            ->where($query->qualifyColumn('approved_status'), self::APPROVAL_APPROVED)
+            ->where($query->qualifyColumn('status'), 'active')
+            ->where($query->qualifyColumn('moderation_version'), '>', 0)
+            ->whereColumn(
+                $query->qualifyColumn('reviewed_version'),
+                $query->qualifyColumn('moderation_version')
+            )
+            ->whereHas('store', fn(Builder $storeQuery) => $storeQuery
+                ->where('status', 'active')
+                ->whereNull('suspended_at')
+                ->whereHas('seller', fn(Builder $sellerQuery) => $sellerQuery
+                    ->where('user_type', 'vendor')
+                    ->whereNotNull('email_verified_at')
+                    ->whereHas('kyc', fn(Builder $kycQuery) => $kycQuery
+                        ->where('status', 'approved'))));
+    }
+
+    public function categories(): BelongsToMany
     {
         return $this->belongsToMany(Category::class);
     }
 
-    function tags(): BelongsToMany
+    public function tags(): BelongsToMany
     {
         return $this->belongsToMany(Tag::class);
     }
 
-    function primaryImage(): HasOne
+    public function primaryImage(): HasOne
     {
         return $this->hasOne(ProductImage::class)->orderBy('order');
     }
 
-    function images(): HasMany
+    public function images(): HasMany
     {
         return $this->hasMany(ProductImage::class)->orderBy('order');
     }
 
-    function attributes(): BelongsToMany
+    public function attributes(): BelongsToMany
     {
         return $this->belongsToMany(Attribute::class, 'product_attribute_values')->withPivot('attribute_value_id');
     }
 
-    function attributeValues(): BelongsToMany
+    public function attributeValues(): BelongsToMany
     {
         return $this->belongsToMany(AttributeValue::class, 'product_attribute_values')->withPivot('attribute_id');
     }
 
-    function attributeWithValues(): BelongsToMany
+    public function attributeWithValues(): BelongsToMany
     {
         return $this->belongsToMany(Attribute::class, 'product_attribute_values')
             ->distinct()
@@ -53,26 +91,41 @@ class Product extends Model
                     $query->whereIn('id', function ($subquery) {
                         $subquery->select('attribute_value_id')->from('product_attribute_values')->where('product_id', $this->id)->orderBy('id', 'asc');
                     });
-                }
+                },
             ]);
     }
 
-    function variants(): HasMany
+    public function variants(): HasMany
     {
         return $this->hasMany(ProductVariant::class);
     }
 
-    function primaryVariant(): HasOne
+    public function primaryVariant(): HasOne
     {
         return $this->hasOne(ProductVariant::class)->where('is_default', 1);
     }
 
-    function store(): BelongsTo
+    public function store(): BelongsTo
     {
         return $this->belongsTo(Store::class);
     }
 
-    function files(): HasMany
+    public function approver(): BelongsTo
+    {
+        return $this->belongsTo(Admin::class, 'approved_by');
+    }
+
+    public function approvalReviews(): HasMany
+    {
+        return $this->hasMany(ProductApprovalReview::class)->orderByDesc('version');
+    }
+
+    public function latestApprovalReview()
+    {
+        return $this->hasOne(ProductApprovalReview::class)->latestOfMany();
+    }
+
+    public function files(): HasMany
     {
         return $this->hasMany(ProductFile::class);
     }
