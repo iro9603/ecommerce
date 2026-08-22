@@ -91,7 +91,7 @@ class ProductPolicy
 
         return $user->kyc?->status === 'approved'
             && $user->email_verified_at !== null
-            && in_array($user->store?->status, ['draft', 'pending', 'active'], true)
+            && in_array($user->store?->status, ['draft', 'pending', 'approved'], true)
             && $user->store?->suspended_at === null;
     }
 }

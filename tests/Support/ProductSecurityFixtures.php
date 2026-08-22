@@ -27,12 +27,16 @@ final class ProductSecurityFixtures
 
         $store = Store::forceCreate(array_merge([
             'seller_id' => $user->getKey(),
-            'name' => 'Security Store '.$identifier,
-            'slug' => 'security-store-'.$identifier,
-            'status' => 'active',
+            'name' => 'Security Store ' . $identifier,
+            'slug' => 'security-store-' . $identifier,
+            'status' => 'approved',
             'approved_at' => now(),
             'suspended_at' => null,
             'auto_approve_products' => false,
+            'moderation_version' => 1,
+            'reviewed_version' => 1,
+            'moderation_fingerprint' => 'fixture-store-hash',
+            'submitted_at' => now(),
         ], $storeOverrides));
 
         $kyc = Kyc::forceCreate(array_merge([
@@ -63,8 +67,8 @@ final class ProductSecurityFixtures
         return Product::forceCreate(array_merge([
             'store_id' => $store->getKey(),
             'product_type' => 'physical',
-            'name' => 'Security Product '.$identifier,
-            'slug' => 'security-product-'.$identifier,
+            'name' => 'Security Product ' . $identifier,
+            'slug' => 'security-product-' . $identifier,
             'description' => '<p>Safe product description.</p>',
             'short_description' => '<p>Safe summary.</p>',
             'price' => 100,
@@ -79,7 +83,7 @@ final class ProductSecurityFixtures
     {
         return Admin::forceCreate([
             'name' => 'Security Reviewer',
-            'email' => 'reviewer-'.Str::uuid().'@example.com',
+            'email' => 'reviewer-' . Str::uuid() . '@example.com',
             'email_verified_at' => now(),
             'password' => 'password',
         ]);

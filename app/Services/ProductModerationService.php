@@ -3,9 +3,11 @@
 namespace App\Services;
 
 use App\Jobs\EvaluateProductForApproval;
+use App\Jobs\EvaluateProductApprovalContext;
 use App\Models\Admin;
 use App\Models\Product;
 use App\Models\ProductApprovalReview;
+use App\Models\Store;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use LogicException;
@@ -19,17 +21,49 @@ class ProductModerationService
         ?User $submittedBy = null,
         ?string $reason = null
     ): ProductApprovalReview {
+        return $this->submitInternal($product, $submittedBy, $reason, false);
+    }
+
+    public function markForReview(
+        Product $product,
+        ?User $submittedBy = null,
+        ?string $reason = null
+    ): ProductApprovalReview {
+        return $this->submit($product, $submittedBy, $reason);
+    }
+
+    /**
+     * Force a new moderation version even when the product content hash has
+     * not changed. This is used when seller security context changes and the
+     * previous approval must be invalidated rather than reused.
+     */
+    public function forceRevalidate(
+        Product $product,
+        ?User $submittedBy = null,
+        ?string $reason = null
+    ): ProductApprovalReview {
+        return $this->submitInternal($product, $submittedBy, $reason, true);
+    }
+
+    private function submitInternal(
+        Product $product,
+        ?User $submittedBy,
+        ?string $reason,
+        bool $forceNewVersion
+    ): ProductApprovalReview {
         if (! $product->exists) {
             throw new LogicException('A product must be saved before it can be submitted for moderation.');
         }
 
-        [$review, $version] = DB::transaction(function () use ($product, $submittedBy, $reason): array {
+        [$review, $version] = DB::transaction(function () use ($product, $submittedBy, $reason, $forceNewVersion): array {
             $current = Product::withTrashed()
                 ->whereKey($product->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
-            $snapshot = $this->snapshot($current);
+            $snapshot = $this->contentSnapshot($current);
             $fingerprint = $this->fingerprint($snapshot);
+            $context = $this->evaluationContext($current);
+            $contextHash = $this->fingerprint($context);
             $pendingReview = ProductApprovalReview::query()
                 ->where('product_id', $current->getKey())
                 ->where('version', (int) $current->moderation_version)
@@ -37,7 +71,8 @@ class ProductModerationService
                 ->first();
 
             if (
-                $current->approved_status === Product::APPROVAL_PENDING
+                ! $forceNewVersion
+                && $current->approved_status === Product::APPROVAL_PENDING
                 && (int) $current->moderation_version > 0
                 && hash_equals((string) $current->moderation_fingerprint, $fingerprint)
                 && $pendingReview !== null
@@ -47,8 +82,10 @@ class ProductModerationService
                     (int) $current->moderation_version,
                     $snapshot,
                     $fingerprint,
+                    $context,
+                    $contextHash,
                     $submittedBy,
-                    $reason
+                    $reason,
                 );
 
                 return [$review, (int) $current->moderation_version];
@@ -88,6 +125,8 @@ class ProductModerationService
                 'submission_reason' => $this->cleanReason($reason),
                 'content_hash' => $fingerprint,
                 'snapshot' => $snapshot,
+                'evaluation_context' => $context,
+                'context_hash' => $contextHash,
                 'submitted_at' => $submittedAt,
             ]);
 
@@ -98,14 +137,6 @@ class ProductModerationService
         $product->refresh();
 
         return $review;
-    }
-
-    public function markForReview(
-        Product $product,
-        ?User $submittedBy = null,
-        ?string $reason = null
-    ): ProductApprovalReview {
-        return $this->submit($product, $submittedBy, $reason);
     }
 
     public function approve(
@@ -119,7 +150,7 @@ class ProductModerationService
             Product::APPROVAL_APPROVED,
             $reviewer,
             $reason ?? 'Approved by an administrator.',
-            $expectedVersion
+            $expectedVersion,
         );
     }
 
@@ -134,14 +165,76 @@ class ProductModerationService
             Product::APPROVAL_REJECTED,
             $reviewer,
             $reason,
-            $expectedVersion
+            $expectedVersion,
         );
     }
 
-    public function evaluatePending(int $productId, int $expectedVersion): bool
+    public function reevaluatePendingStoreContext(Store $store, string $reason): int
+    {
+        $count = 0;
+
+        Product::query()
+            ->where('store_id', $store->getKey())
+            ->where('approved_status', Product::APPROVAL_PENDING)
+            ->orderBy('id')
+            ->each(function (Product $product) use ($reason, &$count): void {
+                $dispatch = DB::transaction(function () use ($product, $reason): ?array {
+                    $current = Product::query()
+                        ->whereKey($product->getKey())
+                        ->lockForUpdate()
+                        ->first();
+
+                    if (
+                        ! $current
+                        || $current->approved_status !== Product::APPROVAL_PENDING
+                        || (int) $current->moderation_version < 1
+                    ) {
+                        return null;
+                    }
+
+                    $review = ProductApprovalReview::query()
+                        ->where('product_id', $current->getKey())
+                        ->where('version', (int) $current->moderation_version)
+                        ->where('status', ProductApprovalReview::STATUS_PENDING)
+                        ->lockForUpdate()
+                        ->first();
+
+                    if (! $review) {
+                        return null;
+                    }
+
+                    $context = $this->evaluationContext($current);
+                    $contextHash = $this->fingerprint($context);
+
+                    $review->forceFill([
+                        'evaluation_context' => $context,
+                        'context_hash' => $contextHash,
+                    ])->save();
+
+                    return [
+                        (int) $current->getKey(),
+                        (int) $current->moderation_version,
+                        $contextHash,
+                    ];
+                });
+
+                if ($dispatch !== null) {
+                    EvaluateProductApprovalContext::dispatch(
+                        $dispatch[0],
+                        $dispatch[1],
+                        $dispatch[2],
+                    )->afterCommit();
+                    $count++;
+                }
+            });
+
+        return $count;
+    }
+
+    public function evaluatePending(int $productId, int $expectedVersion, ?string $contextHash = null): bool
     {
         $product = Product::query()
-            ->with(['store.seller.kyc'])
+            ->with(['store.seller.kyc', 'files'])
             ->find($productId);
 
         if (
@@ -158,20 +251,47 @@ class ProductModerationService
             ->where('status', ProductApprovalReview::STATUS_PENDING)
             ->first();
 
+        if (! $submittedReview) {
+            return false;
+        }
+
+        $contentHash = $this->fingerprint($this->contentSnapshot($product));
+        $context = $this->evaluationContext($product);
+        $contextHash = $this->fingerprint($context);
+
+        if (! hash_equals((string) $submittedReview->content_hash, $contentHash)) {
+            return false;
+        }
+
         if (
-            ! $submittedReview
-            || ! hash_equals($submittedReview->content_hash, $this->fingerprint($this->snapshot($product)))
+            $submittedReview->context_hash !== null
+            && ! hash_equals((string) $submittedReview->context_hash, $contextHash)
+        ) {
+            return false;
+        }
+
+        if (
+            $contextHash !== null
+            && (
+                $submittedReview->context_hash === null
+                || ! hash_equals((string) $submittedReview->context_hash, $contextHash)
+            )
         ) {
             return false;
         }
 
         $assessment = $this->riskEvaluator->evaluate($product);
 
-        return DB::transaction(function () use ($productId, $expectedVersion, $assessment): bool {
+        return DB::transaction(function () use (
+            $productId,
+            $expectedVersion,
+            $assessment,
+            $context,
+            $contextHash,
+            $contentHash
+        ): bool {
             $current = Product::query()->whereKey($productId)->lockForUpdate()->first();
 
-            // A queued evaluation may finish after a vendor has submitted a
-            // newer version. It must never review or approve that new version.
             if (
                 ! $current
                 || $current->approved_status !== Product::APPROVAL_PENDING
@@ -190,7 +310,24 @@ class ProductModerationService
                 return false;
             }
 
-            if (! hash_equals($review->content_hash, $this->fingerprint($this->snapshot($current)))) {
+            if (! hash_equals((string) $review->content_hash, $contentHash)) {
+                return false;
+            }
+
+            if (
+                $review->context_hash !== null
+                && ! hash_equals((string) $review->context_hash, $contextHash)
+            ) {
+                return false;
+            }
+
+            if (
+                $contextHash !== null
+                && (
+                    $review->context_hash === null
+                    || ! hash_equals((string) $review->context_hash, $contextHash)
+                )
+            ) {
                 return false;
             }
 
@@ -198,6 +335,8 @@ class ProductModerationService
                 'risk_score' => $assessment['score'],
                 'risk_level' => $assessment['level'],
                 'risk_reasons' => $assessment['reasons'],
+                'evaluation_context' => $context,
+                'context_hash' => $contextHash,
             ]);
 
             if ($assessment['auto_approvable']) {
@@ -261,8 +400,10 @@ class ProductModerationService
             }
 
             $version = (int) $current->moderation_version;
-            $snapshot = $this->snapshot($current);
+            $snapshot = $this->contentSnapshot($current);
             $fingerprint = $this->fingerprint($snapshot);
+            $context = $this->evaluationContext($current);
+            $contextHash = $this->fingerprint($context);
 
             if ($version < 1) {
                 $version = 1;
@@ -279,7 +420,7 @@ class ProductModerationService
                 ->lockForUpdate()
                 ->first();
 
-            if ($review && ! hash_equals($review->content_hash, $fingerprint)) {
+            if ($review && ! hash_equals((string) $review->content_hash, $fingerprint)) {
                 if ($expectedVersion !== null) {
                     return null;
                 }
@@ -312,6 +453,8 @@ class ProductModerationService
                     'source' => ProductApprovalReview::SOURCE_MANUAL,
                     'content_hash' => $fingerprint,
                     'snapshot' => $snapshot,
+                    'evaluation_context' => $context,
+                    'context_hash' => $contextHash,
                     'submitted_at' => $current->submitted_at ?? now(),
                 ]);
             }
@@ -339,6 +482,8 @@ class ProductModerationService
                 'risk_score' => $assessment['score'],
                 'risk_level' => $assessment['level'],
                 'risk_reasons' => $assessment['reasons'],
+                'evaluation_context' => $context,
+                'context_hash' => $contextHash,
                 'reviewed_at' => $reviewedAt,
             ])->save();
 
@@ -355,6 +500,8 @@ class ProductModerationService
         int $version,
         array $snapshot,
         string $fingerprint,
+        array $context,
+        string $contextHash,
         ?User $submittedBy,
         ?string $reason
     ): ProductApprovalReview {
@@ -376,12 +523,14 @@ class ProductModerationService
         $review->forceFill([
             'content_hash' => $fingerprint,
             'snapshot' => $snapshot,
+            'evaluation_context' => $context,
+            'context_hash' => $contextHash,
         ])->save();
 
         return $review;
     }
 
-    private function snapshot(Product $product): array
+    private function contentSnapshot(Product $product): array
     {
         $productId = (int) $product->getKey();
         $brand = $product->brand_id
@@ -391,7 +540,6 @@ class ProductModerationService
             : null;
 
         return [
-            'store_security' => $this->storeSecuritySnapshot($product),
             'product' => [
                 'id' => $productId,
                 'store_id' => $product->store_id,
@@ -501,7 +649,7 @@ class ProductModerationService
                 ->map(fn (object $row) => (array) $row)
                 ->all(),
             'images' => $this->rows('product_images', $productId, ['id', 'path', 'order']),
-            'files' => $this->rows('product_files', $productId, ['id', 'path', 'extension', 'size']),
+            'files' => $this->rows('product_files', $productId, ['id', 'path', 'extension', 'size', 'sha256']),
             'variants' => $this->rows('product_variants', $productId, [
                 'id',
                 'name',
@@ -531,6 +679,44 @@ class ProductModerationService
         ];
     }
 
+    private function evaluationContext(Product $product): array
+    {
+        $store = DB::table('stores')
+            ->leftJoin('users', 'users.id', '=', 'stores.seller_id')
+            ->leftJoin('kycs', 'kycs.user_id', '=', 'users.id')
+            ->where('stores.id', $product->store_id)
+            ->first([
+                'stores.status as store_status',
+                'stores.suspended_at',
+                'stores.auto_approve_products',
+                'users.user_type as seller_user_type',
+                'users.email_verified_at',
+                'kycs.status as kyc_status',
+            ]);
+
+        if ($store === null) {
+            return [
+                'store_status' => null,
+                'store_suspended' => null,
+                'auto_approve_products' => null,
+                'seller_user_type' => null,
+                'seller_email_verified' => null,
+                'kyc_status' => null,
+                'automatic_approval_enabled' => (bool) config('product_moderation.automatic_approval_enabled', true),
+            ];
+        }
+
+        return [
+            'store_status' => $store->store_status,
+            'store_suspended' => $store->suspended_at !== null,
+            'auto_approve_products' => (bool) $store->auto_approve_products,
+            'seller_user_type' => $store->seller_user_type,
+            'seller_email_verified' => $store->email_verified_at !== null,
+            'kyc_status' => $store->kyc_status,
+            'automatic_approval_enabled' => (bool) config('product_moderation.automatic_approval_enabled', true),
+        ];
+    }
+
     /**
      * @param  array<int, string>  $columns
      * @return array<int, array<string, mixed>>
@@ -543,27 +729,6 @@ class ProductModerationService
             ->get($columns)
             ->map(fn (object $row) => (array) $row)
             ->all();
-    }
-
-    /** @return array<string, mixed>|null */
-    private function storeSecuritySnapshot(Product $product): ?array
-    {
-        $store = DB::table('stores')
-            ->leftJoin('users', 'users.id', '=', 'stores.seller_id')
-            ->leftJoin('kycs', 'kycs.user_id', '=', 'users.id')
-            ->where('stores.id', $product->store_id)
-            ->first([
-                'stores.id',
-                'stores.status',
-                'stores.suspended_at',
-                'stores.auto_approve_products',
-                'users.id as seller_id',
-                'users.user_type as seller_user_type',
-                'users.email_verified_at',
-                'kycs.status as kyc_status',
-            ]);
-
-        return $store === null ? null : (array) $store;
     }
 
     private function fingerprint(array $snapshot): string

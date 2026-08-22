@@ -67,7 +67,9 @@ class RedirectIfAuthenticated
         }
 
         if ($guard === null || $guard == 'web') {
-            return route('dashboard');
+            $user = Auth::guard('web')->user();
+
+            return route($user?->homeRoute() ?? 'dashboard');
         }
 
         return '/';

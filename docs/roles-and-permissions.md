@@ -64,8 +64,8 @@ Los permisos base se crean en `database/seeders/Admin/PermissionSeeder.php`.
 | `Brand Management` | `Product Brands` | `admin` | Gestionar marcas de productos |
 | `Product Management` | `Products` | `admin` | Crear, editar, aprobar y eliminar productos y sus subrecursos |
 | `Store Auto-Approval Management` | `Products` | `admin` | Activar o desactivar autoaprobacion por tienda con auditoria |
-
-`Store Auto-Approval Management` es deliberadamente independiente de `Product Management`. Un editor de productos no puede confiar en una tienda a menos que su rol reciba tambien ese permiso.
+| `Store Management` | `Store Management` | `admin` | Revisar listados de tiendas y aprobar, rechazar, suspender o restaurar tiendas |
+`Store Auto-Approval Management` es deliberadamente independiente de `Product Management`. Un editor de productos no puede confiar en una tienda a menos que su rol reciba tambien ese permiso. Del mismo modo, `Store Management` es un permiso aparte para la moderación de tiendas.
 
 ## Seeders
 

@@ -16,6 +16,7 @@ use App\Http\Controllers\Admin\ProductController;
 use App\Http\Controllers\Admin\ProfileController;
 use App\Http\Controllers\Admin\RoleController;
 use App\Http\Controllers\Admin\StoreAutoApprovalController;
+use App\Http\Controllers\Admin\StoreModerationController;
 use App\Http\Controllers\Admin\TagController;
 use App\Http\Controllers\Admin\UserRoleController;
 use App\Http\Controllers\SettingController;
@@ -87,6 +88,8 @@ Route::middleware('auth:admin')
         /** Role routes */
         Route::resource('/role', RoleController::class);
         Route::resource('/role-users', UserRoleController::class);
+        Route::post('/admin/role-users/{id}/restore', [UserRoleController::class, 'restore'])->name('user-role.restore');
+
 
         /** Categories routes */
         Route::get('/categories', [CategoryController::class, 'index'])->name('categories.index');
@@ -105,7 +108,9 @@ Route::middleware('auth:admin')
 
         /** Product Routes */
         Route::get('/products', [ProductController::class, 'index'])->name('products.index');
-        Route::get('/products/{type}/create', [ProductController::class, 'create'])->name('products.create');
+        Route::get('/products/{type}/create', [ProductController::class, 'create'])
+            ->whereIn('type', ['physical', 'digital'])
+            ->name('products.create');
         Route::post('/products/{type}/create', [ProductController::class, 'store'])
             ->whereIn('type', ['physical', 'digital'])
             ->name('products.store');
@@ -134,6 +139,14 @@ Route::middleware('auth:admin')
 
         Route::patch('/stores/{store}/product-auto-approval', [StoreAutoApprovalController::class, 'update'])
             ->name('stores.product-auto-approval.update');
+
+        /** Store moderation routes */
+        Route::get('/stores', [StoreModerationController::class, 'index'])->name('stores.index');
+        Route::get('/stores/{store}', [StoreModerationController::class, 'show'])->name('stores.show');
+        Route::post('/stores/{store}/approve', [StoreModerationController::class, 'approve'])->name('stores.approve');
+        Route::post('/stores/{store}/reject', [StoreModerationController::class, 'reject'])->name('stores.reject');
+        Route::post('/stores/{store}/suspend', [StoreModerationController::class, 'suspend'])->name('stores.suspend');
+        Route::post('/stores/{store}/restore', [StoreModerationController::class, 'restore'])->name('stores.restore');
 
         /** Setting routes */
         Route::get('/settings', [SettingController::class, 'index'])->name('settings.index');

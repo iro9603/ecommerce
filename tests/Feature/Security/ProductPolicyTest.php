@@ -74,7 +74,7 @@ test('a rejected or suspended store cannot manage products', function (array $st
 })->with([
     'rejected store' => [['status' => 'rejected']],
     'suspended status' => [['status' => 'suspended']],
-    'suspension timestamp' => [['status' => 'active', 'suspended_at' => now()]],
+    'suspension timestamp' => [['status' => 'approved', 'suspended_at' => now()]],
 ]);
 
 test('a regular customer cannot use vendor product abilities', function () {

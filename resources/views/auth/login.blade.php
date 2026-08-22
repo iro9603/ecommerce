@@ -28,6 +28,7 @@
                                         <h1 class="mb-5">Login</h1>
                                         <p class="mb-30">Don't have an account? <a href="{{ route('register') }}">Create
                                                 here</a></p>
+
                                     </div>
                                     <form method="post" action="{{ route('login') }}">
                                         @csrf

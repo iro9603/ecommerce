@@ -10,7 +10,8 @@ use Illuminate\Validation\ValidationException;
 use Tests\Support\ProductSecurityFixtures;
 
 test('a valid single chunk PDF is assembled stored and recorded safely', function () {
-    Storage::fake('local');
+    $disk = (string) config('products.digital_upload.disk', 'local');
+    Storage::fake($disk);
     $vendor = ProductSecurityFixtures::vendor();
     $product = ProductSecurityFixtures::product($vendor['store'], [
         'product_type' => 'digital',
@@ -45,12 +46,13 @@ test('a valid single chunk PDF is assembled stored and recorded safely', functio
             ->and($productFile->filename)->toBe('vendor-manual.pdf')
             ->and($productFile->extension)->toBe('pdf')
             ->and((int) $productFile->size)->toBe(strlen($pdf))
+            ->and($productFile->sha256)->toBe(hash('sha256', $pdf))
             ->and($productFile->path)->toStartWith('product-files/'.$product->getKey().'/')
             ->toEndWith('.pdf')
             ->and(File::isDirectory($chunkFolder))->toBeFalse();
 
-        Storage::disk('local')->assertExists($productFile->path);
-        expect(Storage::disk('local')->get($productFile->path))->toBe($pdf);
+        Storage::disk($disk)->assertExists($productFile->path);
+        expect(Storage::disk($disk)->get($productFile->path))->toBe($pdf);
 
         $this->assertDatabaseHas('product_files', [
             'id' => $productFile->getKey(),
@@ -58,6 +60,7 @@ test('a valid single chunk PDF is assembled stored and recorded safely', functio
             'filename' => 'vendor-manual.pdf',
             'path' => $productFile->path,
             'extension' => 'pdf',
+            'sha256' => hash('sha256', $pdf),
         ]);
     } finally {
         File::deleteDirectory($chunkFolder);
@@ -65,7 +68,7 @@ test('a valid single chunk PDF is assembled stored and recorded safely', functio
 });
 
 test('a persistent product file quota is enforced before accepting chunks', function () {
-    Storage::fake('local');
+    Storage::fake((string) config('products.digital_upload.disk', 'local'));
     config()->set('products.digital_upload.max_files_per_product', 1);
     $vendor = ProductSecurityFixtures::vendor();
     $product = ProductSecurityFixtures::product($vendor['store'], [
@@ -103,7 +106,7 @@ test('a persistent product file quota is enforced before accepting chunks', func
 });
 
 test('incomplete upload quotas are isolated by uploader and stale uploads are pruned', function () {
-    Storage::fake('local');
+    Storage::fake((string) config('products.digital_upload.disk', 'local'));
     config()->set('products.digital_upload.max_active_uploads_per_uploader', 1);
     config()->set('products.digital_upload.incomplete_upload_ttl_hours', 1);
     $vendor = ProductSecurityFixtures::vendor();

@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
@@ -16,7 +17,7 @@ use Illuminate\Notifications\Notifiable;
 class User extends Authenticatable implements MustVerifyEmail
 {
     /** @use HasFactory<UserFactory> */
-    use HasFactory, Notifiable;
+    use HasFactory, Notifiable, SoftDeletes;
 
     /**
      * The attributes that are mass assignable
@@ -62,5 +63,15 @@ class User extends Authenticatable implements MustVerifyEmail
     public function store(): HasOne
     {
         return $this->hasOne(Store::class, 'seller_id');
+    }
+
+    /**
+     * The route name that this user lands on after auth-related redirects
+     * (e.g. login, registration or email verification). Vendors go to the
+     * vendor dashboard; everyone else uses the customer dashboard.
+     */
+    public function homeRoute(): string
+    {
+        return $this->user_type === 'vendor' ? 'vendor.dashboard' : 'dashboard';
     }
 }

@@ -42,8 +42,13 @@ class Product extends Model
                 $query->qualifyColumn('moderation_version')
             )
             ->whereHas('store', fn(Builder $storeQuery) => $storeQuery
-                ->where('status', 'active')
+                ->where('status', 'approved')
                 ->whereNull('suspended_at')
+                ->where($storeQuery->qualifyColumn('moderation_version'), '>', 0)
+                ->whereColumn(
+                    $storeQuery->qualifyColumn('reviewed_version'),
+                    $storeQuery->qualifyColumn('moderation_version')
+                )
                 ->whereHas('seller', fn(Builder $sellerQuery) => $sellerQuery
                     ->where('user_type', 'vendor')
                     ->whereNotNull('email_verified_at')

@@ -28,11 +28,30 @@ class UserRoleController extends Controller implements HasMiddleware
     /**
      * Display a listing of the resource.
      */
-    public function index()
+    public function index(Request $request)
     {
+        $search = $request->input('search');
+
         $admins = Admin::query()
+            ->withTrashed()
             ->with('roles')
-            ->get();
+            /*             ->whereDoesntHave(
+                'roles',
+                fn($query) =>
+                $query->where('name', 'Super Admin')
+            ) */
+            ->when(
+                $search,
+                fn($query, $search) =>
+                $query->where(
+                    fn($query) =>
+                    $query->where('name', 'like', "%{$search}%")
+                        ->orWhere('email', 'like', "%{$search}%")
+                )
+            )
+            ->latest()
+            ->paginate(20)
+            ->withQueryString();
 
         return view('admin.role-users.index', compact('admins'));
     }
@@ -58,7 +77,7 @@ class UserRoleController extends Controller implements HasMiddleware
             'password' => ['required', 'confirmed', 'min:8'],
             'role' => [
                 'required',
-                Rule::exists('roles', 'id')->where(fn ($query) => $query
+                Rule::exists('roles', 'id')->where(fn($query) => $query
                     ->where('guard_name', 'admin')
                     ->where('name', '!=', 'Super Admin')),
             ],
@@ -75,6 +94,7 @@ class UserRoleController extends Controller implements HasMiddleware
         $admin = new Admin;
         $admin->name = $request->name;
         $admin->email = $request->email;
+        $admin->status = true;
         $admin->password = Hash::make($request->password);
         $admin->save();
 
@@ -119,10 +139,10 @@ class UserRoleController extends Controller implements HasMiddleware
 
         $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'email', 'max:255', 'unique:admins,email,'.$role_user->id],
+            'email' => ['required', 'email', 'max:255', 'unique:admins,email,' . $role_user->id],
             'role' => [
                 'required',
-                Rule::exists('roles', 'id')->where(fn ($query) => $query
+                Rule::exists('roles', 'id')->where(fn($query) => $query
                     ->where('guard_name', 'admin')
                     ->where('name', '!=', 'Super Admin')),
             ],
@@ -169,7 +189,9 @@ class UserRoleController extends Controller implements HasMiddleware
         }
 
         try {
-            $role_user->syncRoles([]);
+            $role_user->update([
+                'status' => false,
+            ]);
 
             $role_user->delete();
 
@@ -184,6 +206,16 @@ class UserRoleController extends Controller implements HasMiddleware
                 'message' => $th->getMessage(),
             ]);
         }
+    }
+
+    function restore(int $id)
+    {
+        $admin = Admin::withTrashed()->find($id);
+        $admin->restore();
+        $admin->status = true;
+        $admin->save();
+        AlertService::updated('User restored successfully');
+        return redirect()->route('admin.role-users.index');
     }
 
     private function assignableAdminRoles()

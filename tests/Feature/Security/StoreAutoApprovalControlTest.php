@@ -1,6 +1,6 @@
 <?php
 
-use App\Jobs\EvaluateProductForApproval;
+use App\Jobs\EvaluateProductApprovalContext;
 use App\Models\Product;
 use App\Models\ProductApprovalReview;
 use App\Models\StoreAutoApprovalAudit;
@@ -56,24 +56,24 @@ test('an eligible store can be trusted with an audit and pending products are re
     $product->refresh();
     $newReview = ProductApprovalReview::query()
         ->where('product_id', $product->getKey())
-        ->where('version', 2)
+        ->where('version', 1)
         ->sole();
     $audit = StoreAutoApprovalAudit::query()->sole();
 
     expect($vendor['store']->fresh()->auto_approve_products)->toBeTrue()
-        ->and($oldReview->fresh()->status)->toBe(ProductApprovalReview::STATUS_SUPERSEDED)
-        ->and($product->moderation_version)->toBe(2)
+        ->and($oldReview->fresh()->status)->toBe(ProductApprovalReview::STATUS_PENDING)
+        ->and($product->moderation_version)->toBe(1)
         ->and($newReview->status)->toBe(ProductApprovalReview::STATUS_PENDING)
-        ->and((bool) $newReview->snapshot['store_security']['auto_approve_products'])->toBeTrue()
+        ->and((bool) $newReview->evaluation_context['auto_approve_products'])->toBeTrue()
         ->and($audit->admin_id)->toBe($admin->getKey())
         ->and($audit->previous_value)->toBeFalse()
         ->and($audit->new_value)->toBeTrue()
         ->and($audit->pending_products_resubmitted)->toBe(1);
 
     Queue::assertPushed(
-        EvaluateProductForApproval::class,
-        fn (EvaluateProductForApproval $job): bool => $job->productId === $product->getKey()
-            && $job->moderationVersion === 2
+        EvaluateProductApprovalContext::class,
+        fn (EvaluateProductApprovalContext $job): bool => $job->productId === $product->getKey()
+            && $job->moderationVersion === 1
     );
 
     $this
@@ -86,7 +86,7 @@ test('an eligible store can be trusted with an audit and pending products are re
         ->assertJsonPath('changed', false);
 
     expect(StoreAutoApprovalAudit::query()->count())->toBe(1)
-        ->and($product->fresh()->moderation_version)->toBe(2);
+        ->and($product->fresh()->moderation_version)->toBe(1);
 });
 
 test('an ineligible store cannot be trusted but automatic approval can always be disabled', function () {

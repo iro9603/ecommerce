@@ -62,7 +62,7 @@ class SellerTypeRevalidationService
                     ])
                     ->orderBy('id')
                     ->pluck('id')
-                    ->map(fn ($id): int => (int) $id)
+                    ->map(fn($id): int => (int) $id)
                     ->all();
 
                 // Fail closed before producing the detailed snapshots. If a
@@ -130,7 +130,7 @@ class SellerTypeRevalidationService
                     continue;
                 }
 
-                $this->moderation->markForReview($product, null, $plan['reason']);
+                $this->moderation->forceRevalidate($product, null, $plan['reason']);
                 $resubmitted++;
 
                 if ($plan['audit_id'] !== null) {
@@ -165,7 +165,7 @@ class SellerTypeRevalidationService
             'kyc_status' => $seller->kyc?->status,
         ];
 
-        $snapshot['eligible'] = $snapshot['store_status'] === 'active'
+        $snapshot['eligible'] = $snapshot['store_status'] === 'approved'
             && $snapshot['store_not_suspended']
             && $snapshot['seller_is_vendor']
             && $snapshot['seller_email_verified']

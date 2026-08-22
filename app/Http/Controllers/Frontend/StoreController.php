@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Frontend;
 use App\Http\Controllers\Controller;
 use App\Models\Store;
 use App\Services\AlertService;
+use App\Services\StoreModerationService;
 use App\Traits\FileUploadTrait;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -23,7 +24,7 @@ class StoreController extends Controller
         return view('vendor-dashboard.store-profile.index', compact('store'));
     }
 
-    public function update(Request $request): RedirectResponse
+    public function update(Request $request, StoreModerationService $moderation): RedirectResponse
     {
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
@@ -82,19 +83,50 @@ class StoreController extends Controller
             unset($validated['banner']);
         }
 
-        $validated['social_links'] = collect($validated['social_links'] ?? [])
-            ->filter()
-            ->all();
+        if ($request->has('social_links')) {
+            $validated['social_links'] = collect($validated['social_links'] ?? [])
+                ->filter()
+                ->all();
+        } else {
+            unset($validated['social_links']);
+        }
 
         if (! $store->exists) {
             $store->seller_id = $request->user()->id;
             $store->slug = $this->uniqueSlug($validated['name']);
         }
 
+        $isNew = ! $store->exists;
+        $wasApproved = $store->exists && $store->isApproved();
+
         $store->fill($validated);
+        $hasMaterialChanges = $store->isDirty(StoreModerationService::materialFields());
         $store->save();
 
-        AlertService::updated('Store profile updated successfully.');
+        // Only a new store or a material profile change creates a new
+        // moderation version. A no-op save must not invalidate an approved
+        // store or create an unnecessary review.
+        $review = null;
+
+        if ($isNew || $hasMaterialChanges) {
+            $review = $moderation->submitForReview(
+                $store,
+                $request->user(),
+                $wasApproved
+                    ? 'The vendor updated the store profile after it was approved.'
+                    : 'The vendor created or updated the store profile.',
+            );
+        }
+
+        if ($review !== null) {
+            AlertService::updated(
+                $wasApproved
+                    ? 'Store profile updated. The store is now pending review.'
+                    : 'Store profile saved. The store is now pending review by an administrator.'
+            );
+        } else {
+            AlertService::updated('Store profile saved.');
+        }
 
         return redirect()->route('vendor.store-profile.index');
     }

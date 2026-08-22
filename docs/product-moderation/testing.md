@@ -72,6 +72,7 @@ La suite ampliada y la prueba de slug son el criterio mínimo antes de modificar
 | Archivo | Casos cubiertos |
 | --- | --- |
 | `DigitalProductFileUploadFeatureTest.php` | PDF válido, ensamblado, cuota persistente, aislamiento y TTL. |
+| `DigitalProductFileDeleteFeatureTest.php` | Borrado vendor por HTTP, borrado admin sobre el disco configurado y ausencia de columna `disk`. |
 | `DigitalProductFileUploadServiceTest.php` | Traversal y limpieza fuera del root. |
 | `FileUploadTraitTest.php` | MIME frente a nombre `.php` y delete traversal. |
 | `ProductContentSanitizerTest.php` | Escape de textarea, atributos ejecutables, null/vacío. |
@@ -233,7 +234,7 @@ Comprobar:
 ./vendor/bin/sail artisan migrate --pretend --no-interaction
 ```
 
-Debe mostrar las cuatro migraciones sin error SQL.
+Debe mostrar las cinco migraciones sin error SQL. La última (`drop_disk_from_product_files_table`) es defensiva: en `--pretend` sólo se observa su `select exists` porque la guarda `hasTable` evalúa sobre una conexión simulada; su aplicación real se valida en la suite con la prueba de esquema que confirma que `product_files` ya no tiene columna `disk`.
 
 ### Diff
 
@@ -276,7 +277,7 @@ La suite focalizada de seguridad/moderación debe permanecer verde aunque la sui
 
 ### Vendor elegible
 
-1. Email verificado, KYC aprobado y tienda draft/pending/active.
+1. Email verificado, KYC aprobado y tienda draft/pending/approved.
 2. Crear producto físico.
 3. Confirmar `store_id` de su tienda y `approved_status = pending`.
 4. Confirmar review versión 1.
@@ -356,3 +357,11 @@ Cada nuevo campo o subrecurso material debe incluir como mínimo:
 - job antiguo no decide la versión nueva;
 - admin stale recibe conflicto;
 - consulta pública no expone estado no elegible.
+
+## Store & Product Moderation Refactor
+
+See `docs/refactor-implementation.md` for the complete implementation record:
+versioned Store moderation, Product content/eligibility separation, KYC/email
+revalidation, synchronous reference invalidation, digital file hashes, and
+soft-delete safety.
+

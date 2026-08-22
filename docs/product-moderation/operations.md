@@ -14,7 +14,7 @@ La implementación fue validada con migraciones en modo `--pretend`. No se debe 
 - Tabla `jobs`, `job_batches` y `failed_jobs` creada por la migración base de Laravel.
 - Un worker de cola persistente en ambientes donde se espere autoevaluación.
 - Cache compartida entre workers para `ShouldBeUnique`; la configuración actual usa database cache.
-- Permisos de escritura en `storage/app/private` y `storage/framework`.
+- Permisos de escritura en `storage/app/private` y `storage/framework`; si `PRODUCT_DIGITAL_UPLOAD_DISK` apunta a otro disco (por ejemplo `s3`), permisos y credenciales de ese disco.
 - Límites PHP/proxy mayores que el chunk configurado.
 - Backup de base de datos y storage antes de aplicar las migraciones.
 - Home, listado y detalle públicos disponibles y actualizados para usar `Product::published()`.
@@ -36,6 +36,7 @@ La autoaprobación sigue siendo opt-in por tienda aunque el interruptor global e
 
 | Variable | Default | Equivalencia |
 | --- | ---: | --- |
+| `PRODUCT_DIGITAL_UPLOAD_DISK` | `local` | Disco único para escribir y borrar archivos digitales (por ejemplo `s3` en producción). |
 | `PRODUCT_MAX_DIGITAL_FILE_SIZE_KB` | `262144` | 256 MiB por archivo. |
 | `PRODUCT_MAX_DIGITAL_CHUNK_SIZE_KB` | `10240` | 10 MiB por chunk. |
 | `PRODUCT_MAX_DIGITAL_CHUNKS` | `4096` | Máximo de chunks por upload. |
@@ -138,6 +139,12 @@ El rollback elimina el índice, pero no restaura los slugs anteriores.
 
 - Crea la auditoría de confianza de tienda.
 - El rollback elimina ese historial.
+
+### `2026_08_17_120000_drop_disk_from_product_files_table`
+
+- Elimina la columna `disk` de `product_files` para que escritura y borrado usen siempre `config('products.digital_upload.disk')`.
+- El `down()` restaura la columna con default `local`.
+- Es defensiva (`hasTable`/`hasColumn`), por lo que puede aplicarse en bases que ya no tengan la columna.
 
 ## Checklist previo al despliegue
 
@@ -376,7 +383,7 @@ ORDER BY failed_at DESC;
 8. Home, listado y detalle muestran el aprobado elegible y devuelven 404 para un slug no publicable.
 9. Cambiar seller de `vendor` a otro tipo desactiva confianza, crea versión pending y retira el producto; volver a vendor no restaura confianza.
 10. Producto aprobado pero tienda suspendida no aparece en una consulta `published()`.
-11. Upload PDF válido termina en storage privado.
+11. Upload PDF válido termina en el disco `config('products.digital_upload.disk')` y el borrado (vendor/admin) elimina del mismo disco.
 12. Nombre `..` o metadata inconsistente recibe 422 y no crea carpeta insegura.
 
 ## Troubleshooting
@@ -389,7 +396,7 @@ Comprobar:
 - email verificado;
 - KYC `approved`;
 - tienda existente;
-- tienda `draft`, `pending` o `active`;
+- tienda `draft`, `pending` o `approved`;
 - `suspended_at IS NULL`;
 - ownership del producto.
 
@@ -502,3 +509,11 @@ En el entorno inspeccionado las migraciones aparecen en el mismo batch inicial, 
 - Revisar `failed_jobs` y productos pendientes antiguos con alertas.
 - Conservar auditorías de confianza según la política de retención.
 - Ejecutar pruebas de seguridad después de cambios de catálogo, storage, KYC o permisos.
+
+## Store & Product Moderation Refactor
+
+See `docs/refactor-implementation.md` for the complete implementation record:
+versioned Store moderation, Product content/eligibility separation, KYC/email
+revalidation, synchronous reference invalidation, digital file hashes, and
+soft-delete safety.
+

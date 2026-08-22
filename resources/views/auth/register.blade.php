@@ -43,31 +43,12 @@
                                             <x-input-error :messages="$errors->get('password')" class="mt-2" />
                                         </div>
                                         <div class="form-group">
-
                                             <input required="" type="password" name="password_confirmation"
                                                 placeholder="Confirm password" />
                                             <x-input-error :messages="$errors->get('password_confirmation')" class="mt-2" />
                                         </div>
 
-                                        <div class="payment_option mb-30">
-                                            <div class="custome-radio">
-                                                <input class="form-check-input" required type="radio" name="user_type"
-                                                    id="customer" value="user" @checked(old('user_type', 'user') === 'user') />
-
-                                                <label class="form-check-label" for="customer">
-                                                    I am a customer
-                                                </label>
-                                            </div>
-
-                                            <div class="custome-radio">
-                                                <input class="form-check-input" required type="radio" name="user_type"
-                                                    id="vendor" value="vendor" @checked(old('user_type') === 'vendor') />
-
-                                                <label class="form-check-label" for="vendor">
-                                                    I am a vendor
-                                                </label>
-                                            </div>
-                                        </div>
+                                        <input type="hidden" name="user_type" value="user" />
                                         <div class="form-group mb-0">
                                             <button type="submit"
                                                 class="btn btn-fill-out btn-block hover-up font-weight-bold"

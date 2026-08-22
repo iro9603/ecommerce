@@ -295,6 +295,17 @@
                 @endif
 
 
+                @if (hasPermission(['Store Management']))
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ route('admin.stores.index') }}">
+                            <span class="nav-link-icon d-md-none d-lg-inline-block">
+                                <i class="ti ti-building-store"></i>
+                            </span>
+                            <span class="nav-link-title"> Stores </span>
+                        </a>
+                    </li>
+                @endif
+
                 @if (hasPermission(['KYC Management']))
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#navbar-base" data-bs-toggle="dropdown"

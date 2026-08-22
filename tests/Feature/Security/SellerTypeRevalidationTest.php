@@ -50,7 +50,7 @@ test('a seller type change synchronously revokes trust and invalidates existing 
         ->and($product->reviewed_version)->toBeNull()
         ->and($product->approved_at)->toBeNull()
         ->and($newReview->status)->toBe(ProductApprovalReview::STATUS_PENDING)
-        ->and($newReview->snapshot['store_security']['seller_user_type'])->toBe('user')
+        ->and($newReview->evaluation_context['seller_user_type'])->toBe('user')
         ->and($audit->admin_id)->toBeNull()
         ->and($audit->previous_value)->toBeTrue()
         ->and($audit->new_value)->toBeFalse()

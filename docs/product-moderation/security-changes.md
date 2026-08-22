@@ -27,6 +27,7 @@ Las severidades describen el impacto potencial antes de aplicar los cambios.
 | Referencias cambiadas después de aprobar | Alta | Snapshot de definiciones y reenvío mediante observer/job. | Corregido y probado. |
 | Autoaprobación sin control | Alta | Opt-in por tienda, permiso dedicado y auditoría. | Corregido y probado. |
 | Seller deja de ser vendor | Crítica | Revalidación transaccional, revocación de confianza y barreras independientes. | Corregido y probado. |
+| Borrado de archivos dirigido por columna de BD | Alta | Un único disco configurado gobierna escritura y borrado; la columna `disk` se elimina. | Corregido y probado. |
 
 ## 1. Traversal y borrado recursivo
 
@@ -66,7 +67,8 @@ Los controladores digitales también verifican:
 - que el archivo pertenezca al producto;
 - que la ruta sea relativa;
 - que empiece por `uploads/` o `product-files/`;
-- que el disco pertenezca a la allowlist `local`, `public`, `s3`.
+- que el disco de borrado coincida con `config('products.digital_upload.disk')`;
+- que el disco de borrado nunca provenga de una columna de base de datos.
 
 ### Evidencia
 
@@ -172,7 +174,7 @@ Además, autorizar antes de una transacción no era suficiente. Si un admin reas
 - usuario vendor;
 - email verificado;
 - KYC aprobado;
-- tienda `draft`, `pending` o `active`;
+- tienda `draft`, `pending` o `approved`;
 - tienda no suspendida;
 - coincidencia entre producto y tienda del usuario.
 
@@ -360,7 +362,7 @@ El servicio:
 - detecta MIME con `finfo`;
 - deriva extensión del MIME;
 - usa UUID para el nombre físico;
-- guarda el producto digital bajo `storage/app/private/product-files/{product_id}`;
+- guarda el producto digital en el disco `config('products.digital_upload.disk')` —por defecto `local`, ruta `storage/app/private/product-files/{product_id}`—;
 - aplica cuotas por uploader, producto y tienda;
 - elimina chunks stale al reservar uploads nuevos.
 
@@ -503,6 +505,38 @@ La aprobación no se invalida dentro del mismo commit: existe una ventana hasta 
 
 SQL directo no dispara observers. Nuevas referencias compartidas deben añadirse al snapshot y a un observer o servicio equivalente.
 
+## 14. Disco de almacenamiento digital controlado por configuración
+
+### Problema original
+
+La tabla `product_files` conservaba una columna `disk` (`local`, `public`, `s3`) y el borrado de archivos la usaba como autoridad para elegir el `Storage` disk:
+
+```php
+$disk = in_array($file->disk, ['local', 'public', 's3'], true) ? $file->disk : 'local';
+Storage::disk($disk)->delete($path);
+```
+
+La columna nunca controlaba la escritura: todos los uploads iban a `storage/app/private` (disco `local`). Cualquier valor distinto —por ejemplo `s3`— hacía que el borrado intentara eliminar en un disco ajeno y dejara el archivo real huérfano en `local`. Un registro tampeado por SQL directo, un bug de persistencia o un valor legacy podían romper la correspondencia entre la fila y el archivo físico.
+
+### Solución
+
+- El disco de subida y borrado es un único valor de configuración: `config('products.digital_upload.disk')` (`PRODUCT_DIGITAL_UPLOAD_DISK`, por defecto `local`).
+- El servicio de upload y ambos controladores (admin y vendor) leen la misma configuración para escribir y para compensar/eliminar.
+- El borrado ya no consulta la base de datos: la columna `disk` se elimina con una migración (`2026_08_17_120000_drop_disk_from_product_files_table`).
+- La migración es defensiva (`hasTable`/`hasColumn`) y su `down()` restaura la columna con default `local` para entornos que reviertan el cambio.
+
+### Evidencia
+
+- `DigitalProductFileDeleteFeatureTest` borra por HTTP como vendor y elimina la fila y el archivo del disco configurado.
+- El mismo test delega en `AdminDigitalProductFileController::destroy` con `products.digital_upload.disk = s3` y comprueba que el archivo desaparece de `s3`, no de un disco hardcodeado.
+- `DigitalProductFileUploadFeatureTest` usa el disco configurado en todo el flujo.
+- Una prueba de esquema confirma que `product_files` ya no tiene columna `disk`.
+
+### Riesgo residual
+
+- Si la fila se elimina pero el borrado del archivo falla después del commit, puede quedar un archivo huérfano que consume espacio (no permite traversal ni afecta a otro disco). Conviene la reconciliación periódica de `product_files` contra storage.
+- El disco es un solo valor para todo el catálogo digital; si se necesita aislar tiendas por storage, debe migrarse a un esquema de múltiples discos con la misma regla: escritura y borrado siempre desde la misma fuente de configuración.
+
 ## Prioridades de hardening pendientes
 
 1. Crear un reconciliador periódico que repare confianza/revisiones obsoletas causadas por SQL, `query()->update()`, `saveQuietly()` o eventos deshabilitados.
@@ -515,3 +549,11 @@ SQL directo no dispara observers. Nuevas referencias compartidas deben añadirse
 8. Considerar separación entre quien edita y quien aprueba en escenarios de mayor cumplimiento.
 9. Aplicar CSP y pruebas de fuzzing al HTML enriquecido.
 10. Añadir regresiones específicas para cambios de Category y Tag.
+
+## Store & Product Moderation Refactor
+
+See `docs/refactor-implementation.md` for the complete implementation record:
+versioned Store moderation, Product content/eligibility separation, KYC/email
+revalidation, synchronous reference invalidation, digital file hashes, and
+soft-delete safety.
+

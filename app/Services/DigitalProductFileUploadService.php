@@ -92,6 +92,7 @@ class DigitalProductFileUploadService
             $this->assertFinalSize($assembledPath, $metadata['total_size']);
             $this->assertPersistentQuota($product, $metadata['total_size']);
             $extension = $this->safeExtension($assembledPath);
+            $sha256 = hash_file('sha256', $assembledPath);
             $relativePath = 'product-files/'.$product->getKey().'/'.Str::uuid().'.'.$extension;
 
             $stream = fopen($assembledPath, 'rb');
@@ -100,7 +101,7 @@ class DigitalProductFileUploadService
             }
 
             try {
-                if (! Storage::disk('local')->put($relativePath, $stream)) {
+                if (! Storage::disk($this->uploadDisk())->put($relativePath, $stream)) {
                     throw new RuntimeException('Unable to store the uploaded file.');
                 }
             } finally {
@@ -114,9 +115,10 @@ class DigitalProductFileUploadService
                 $productFile->path = $relativePath;
                 $productFile->extension = $extension;
                 $productFile->size = filesize($assembledPath);
+                $productFile->sha256 = $sha256;
                 $productFile->save();
             } catch (\Throwable $exception) {
-                Storage::disk('local')->delete($relativePath);
+                Storage::disk($this->uploadDisk())->delete($relativePath);
                 throw $exception;
             }
 
@@ -380,6 +382,11 @@ class DigitalProductFileUploadService
         }
 
         return $extension;
+    }
+
+    private function uploadDisk(): string
+    {
+        return (string) config('products.digital_upload.disk', 'local');
     }
 
     private function safeOriginalName(string $name): string

@@ -19,8 +19,10 @@ return new class extends Migration
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
             $table->enum('user_type', ['user', 'vendor'])->default('user');
+            $table->boolean('status')->default(false);
             $table->rememberToken();
             $table->timestamps();
+            $table->softDeletesDatetime();
         });
 
         Schema::create('password_reset_tokens', function (Blueprint $table) {

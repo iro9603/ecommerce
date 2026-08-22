@@ -369,6 +369,133 @@
                     </div>
                 </div>
                 <div class="col-lg-4 product-sidebar">
+                    @php
+                        $review = $product->latestApprovalReview;
+
+                        $riskClass = match ($review?->risk_level) {
+                            'critical' => 'danger',
+                            'high' => 'warning',
+                            'medium' => 'info',
+                            'low' => 'success',
+                            default => 'secondary',
+                        };
+
+                        $riskText = match ($riskClass) {
+                            'danger' => 'text-white',
+                            'warning' => 'text-gray',
+                            'info' => 'text-white',
+                            'success' => 'text-white',
+                            default => 'secondary',
+                        };
+                    @endphp
+
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h3 class="card-title mb-0">
+                                <i class="ti ti-shield-exclamation me-1"></i>
+                                Risk Assessment
+                            </h3>
+
+                            @if ($review)
+                                <span class="badge bg-{{ $riskClass }} text-uppercase {{ $riskText }}">
+                                    {{ $review->risk_level }}
+                                </span>
+                            @endif
+                        </div>
+
+                        <div class="card-body">
+                            @if ($review)
+                                {{-- Risk summary --}}
+                                <div class="row g-3 mb-4">
+                                    <div class="col-md-6">
+                                        <div class="border rounded p-3 h-100">
+                                            <div class="text-muted small mb-1">
+                                                Risk Level
+                                            </div>
+
+                                            <div class="d-flex align-items-center gap-2">
+                                                <span
+                                                    class="badge bg-{{ $riskClass }} fs-6 text-uppercase  {{ $riskText }}">
+                                                    {{ $review->risk_level }}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="col-md-6">
+                                        <div class="border rounded p-3 h-100">
+                                            <div class="text-muted small mb-1">
+                                                Risk Score
+                                            </div>
+
+                                            <div class="d-flex align-items-end gap-2">
+                                                <span class="fs-2 fw-bold text-{{ $riskClass }}">
+                                                    {{ $review->risk_score }}
+                                                </span>
+
+                                                <span class="text-muted mb-1">
+                                                    / 100
+                                                </span>
+                                            </div>
+
+                                            <div class="progress mt-2" style="height: 6px;">
+                                                <div class="progress-bar bg-{{ $riskClass }}" role="progressbar"
+                                                    style="width: {{ min($review->risk_score, 100) }}%"
+                                                    aria-valuenow="{{ $review->risk_score }}" aria-valuemin="0"
+                                                    aria-valuemax="100">
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {{-- Risk reasons --}}
+                                <div>
+                                    <h5 class="mb-3">
+                                        Risk Factors
+                                    </h5>
+
+                                    @forelse ($review->risk_reasons ?? [] as $factor)
+                                        <div class="border rounded p-3 mb-2">
+                                            <div class="d-flex justify-content-between align-items-start gap-3">
+                                                <div>
+                                                    <div class="d-flex align-items-center gap-2 mb-1">
+                                                        <strong>
+                                                            {{ Str::headline($factor['code']) }}
+                                                        </strong>
+                                                    </div>
+                                                    <p>
+                                                        @if ($factor['blocks_automatic_approval'] ?? false)
+                                                            <span class="badge bg-danger-subtle text-danger">
+                                                                Blocks automatic approval
+                                                            </span>
+                                                        @endif
+                                                    </p>
+                                                    <p class="text-muted mb-0">
+                                                        {{ $factor['message'] }}
+                                                    </p>
+                                                </div>
+
+                                                <span
+                                                    class="badge {{ ($factor['score'] ?? 0) > 0 ? 'bg-danger-subtle text-danger' : 'bg-secondary-subtle text-secondary' }}">
+                                                    +{{ $factor['score'] ?? 0 }}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    @empty
+                                        <div class="text-muted">
+                                            No risk factors detected.
+                                        </div>
+                                    @endforelse
+                                </div>
+                            @else
+                                <div class="text-center py-4 text-muted">
+                                    <i class="ti ti-shield-check fs-1 d-block mb-2"></i>
+                                    No risk assessment available.
+                                </div>
+                            @endif
+                        </div>
+                    </div>
                     <div class="card mb-3">
                         <div class="card-header">
                             <h3 class="card-title">Approve Status</h3>
@@ -436,7 +563,9 @@
                         </div>
                     </div>
                     @if ($product->store && auth('admin')->user()?->can('Store Auto-Approval Management'))
-                        @include('admin.product.partials.store-auto-approval', ['store' => $product->store])
+                        @include('admin.product.partials.store-auto-approval', [
+                            'store' => $product->store,
+                        ])
                     @endif
                     <div class="card mb-3">
                         <div class="card-header">

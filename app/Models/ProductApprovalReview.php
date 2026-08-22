@@ -33,6 +33,8 @@ class ProductApprovalReview extends Model
         'decision_reason',
         'content_hash',
         'snapshot',
+        'evaluation_context',
+        'context_hash',
         'submitted_at',
         'reviewed_at',
     ];
@@ -44,6 +46,7 @@ class ProductApprovalReview extends Model
             'risk_score' => 'integer',
             'risk_reasons' => 'array',
             'snapshot' => 'array',
+            'evaluation_context' => 'array',
             'submitted_at' => 'datetime',
             'reviewed_at' => 'datetime',
         ];

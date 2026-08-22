@@ -42,7 +42,7 @@ return new class extends Migration
             $table->enum('status', [
                 'draft',
                 'pending',
-                'active',
+                'approved',
                 'suspended',
                 'rejected',
             ])->default('draft')->index();

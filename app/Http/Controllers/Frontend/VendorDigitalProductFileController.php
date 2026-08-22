@@ -21,48 +21,64 @@ class VendorDigitalProductFileController extends Controller
         DigitalProductFileUploadService $uploads,
         ProductModerationService $moderation,
     ): JsonResponse {
+        $product = Product::query()
+            ->whereKey((int) $request->validated('product_id'))
+            ->firstOrFail();
+        Gate::authorize('manageDigitalFiles', $product);
+
         $storedPath = null;
+        $productFileId = null;
 
         try {
-            $result = DB::transaction(function () use (
-                $request,
-                $uploads,
-                $moderation,
-                &$storedPath
-            ): array {
-                $product = Product::query()
-                    ->whereKey((int) $request->validated('product_id'))
-                    ->lockForUpdate()
-                    ->firstOrFail();
-                Gate::authorize('manageDigitalFiles', $product);
+            $result = $uploads->storeChunk(
+                $product,
+                $request->file('file'),
+                [
+                    'uuid' => $request->chunkStorageKey(),
+                    'index' => (int) $request->validated('dzchunkindex'),
+                    'total_chunks' => (int) $request->validated('dztotalchunkcount'),
+                    'total_size' => (int) $request->validated('dztotalfilesize'),
+                    'original_name' => (string) $request->validated('name'),
+                ],
+                'vendor:'.$request->user()->getKey(),
+            );
 
-                $result = $uploads->storeChunk(
+            if ($result['complete']) {
+                $storedPath = (string) $result['product_file']->path;
+                $productFileId = (int) $result['product_file']->getKey();
+
+                DB::transaction(function () use (
                     $product,
-                    $request->file('file'),
-                    [
-                        'uuid' => $request->chunkStorageKey(),
-                        'index' => (int) $request->validated('dzchunkindex'),
-                        'total_chunks' => (int) $request->validated('dztotalchunkcount'),
-                        'total_size' => (int) $request->validated('dztotalfilesize'),
-                        'original_name' => (string) $request->validated('name'),
-                    ],
-                    'vendor:'.$request->user()->getKey(),
-                );
+                    $productFileId,
+                    $moderation,
+                    $request
+                ): void {
+                    $lockedProduct = Product::query()
+                        ->whereKey($product->getKey())
+                        ->lockForUpdate()
+                        ->firstOrFail();
+                    Gate::authorize('manageDigitalFiles', $lockedProduct);
 
-                if ($result['complete']) {
-                    $storedPath = (string) $result['product_file']->path;
+                    ProductFile::query()
+                        ->whereKey($productFileId)
+                        ->where('product_id', $lockedProduct->getKey())
+                        ->lockForUpdate()
+                        ->firstOrFail();
+
                     $moderation->markForReview(
-                        $product,
+                        $lockedProduct,
                         $request->user(),
                         'Digital product file changed by vendor.',
                     );
-                }
-
-                return $result;
-            });
+                });
+            }
         } catch (\Throwable $exception) {
             if ($storedPath !== null) {
-                Storage::disk('local')->delete($storedPath);
+                Storage::disk((string) config('products.digital_upload.disk', 'local'))->delete($storedPath);
+            }
+
+            if ($productFileId !== null) {
+                ProductFile::query()->whereKey($productFileId)->delete();
             }
 
             throw $exception;
@@ -87,12 +103,14 @@ class VendorDigitalProductFileController extends Controller
         ProductFile $file,
         ProductModerationService $moderation,
     ): JsonResponse {
-        [$disk, $path] = DB::transaction(function () use (
+        $disk = (string) config('products.digital_upload.disk', 'local');
+
+        $path = DB::transaction(function () use (
             $request,
             $product,
             $file,
             $moderation
-        ): array {
+        ): string {
             $lockedProduct = Product::query()
                 ->whereKey($product->getKey())
                 ->lockForUpdate()
@@ -104,9 +122,6 @@ class VendorDigitalProductFileController extends Controller
                 ->where('product_id', $lockedProduct->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
-            $disk = in_array($lockedFile->disk, ['local', 'public', 's3'], true)
-                ? $lockedFile->disk
-                : 'local';
             $path = (string) $lockedFile->path;
             abort_unless($this->isSafeProductPath($path), 422, 'Unsafe stored file path.');
             $lockedFile->delete();
@@ -117,7 +132,7 @@ class VendorDigitalProductFileController extends Controller
                 'Digital product file removed by vendor.',
             );
 
-            return [$disk, $path];
+            return $path;
         });
 
         Storage::disk($disk)->delete($path);

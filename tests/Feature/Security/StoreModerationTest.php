@@ -1,0 +1,295 @@
+<?php
+
+use App\Models\Product;
+use App\Models\Store;
+use App\Jobs\EvaluateProductApprovalContext;
+use App\Services\ProductModerationService;
+use Illuminate\Support\Facades\Queue;
+use Spatie\Permission\Models\Permission;
+use Tests\Support\ProductSecurityFixtures;
+
+function storeManagementPermission(): Permission
+{
+    return Permission::findOrCreate('Store Management', 'admin');
+}
+
+function storeModeratingAdmin(): mixed
+{
+    $admin = ProductSecurityFixtures::admin();
+    $admin->givePermissionTo(storeManagementPermission());
+
+    return $admin;
+}
+
+test('creating a store profile places the store in pending for admin review', function () {
+    $vendor = ProductSecurityFixtures::vendor()['user']->forceFill(['user_type' => 'vendor']);
+
+    $response = $this
+        ->actingAs($vendor, 'web')
+        ->put(route('vendor.store-profile.update'), [
+            'name' => 'Fresh Marketplace',
+            'currency' => 'MXN',
+            'country' => 'MX',
+            'timezone' => 'America/Mexico_City',
+        ]);
+
+    $response->assertSessionHasNoErrors()
+        ->assertRedirect(route('vendor.store-profile.index'));
+
+    $store = Store::query()->where('seller_id', $vendor->getKey())->firstOrFail();
+
+    expect($store->status)->toBe(Store::STATUS_PENDING)
+        ->and($store->is_active)->toBeFalse()
+        ->and($store->approved_at)->toBeNull();
+});
+
+test('editing an approved store returns it to pending without invalidating product content approval', function () {
+    $vendor = ProductSecurityFixtures::vendor(storeOverrides: ['status' => 'approved', 'approved_at' => now()]);
+    $product = ProductSecurityFixtures::product($vendor['store']);
+    $moderation = app(ProductModerationService::class);
+    $review = $moderation->submit($product, $vendor['user'], 'Initial submission.');
+    $moderation->approve($product, null, 'Approved by admin.', $review->version);
+
+    expect($product->fresh()->approved_status)->toBe(Product::APPROVAL_APPROVED);
+
+    $this
+        ->actingAs($vendor['user'], 'web')
+        ->put(route('vendor.store-profile.update'), [
+            'name' => 'Renamed Store',
+            'currency' => 'MXN',
+            'country' => 'MX',
+            'timezone' => 'America/Mexico_City',
+        ])
+        ->assertSessionHasNoErrors();
+
+    $store = $vendor['store']->fresh();
+
+    expect($store->status)->toBe(Store::STATUS_PENDING)
+        ->and($store->approved_at)->toBeNull()
+        ->and($store->is_active)->toBeFalse();
+
+    $product->refresh();
+
+    expect($product->approved_status)->toBe(Product::APPROVAL_APPROVED)
+        ->and($product->reviewed_version)->toBe(1)
+        ->and($product->approved_at)->not->toBeNull()
+        ->and(Product::query()->published()->whereKey($product)->exists())->toBeFalse();
+});
+
+test('an admin without the store management permission cannot view or moderate stores', function () {
+    $admin = ProductSecurityFixtures::admin();
+    $admin->givePermissionTo(Permission::findOrCreate('Product Management', 'admin'));
+    $vendor = ProductSecurityFixtures::vendor();
+
+    $this
+        ->actingAs($admin, 'admin')
+        ->get(route('admin.stores.index'))
+        ->assertForbidden();
+
+    $this
+        ->actingAs($admin, 'admin')
+        ->post(route('admin.stores.approve', $vendor['store']), [
+            'moderation_version' => (int) $vendor['store']->moderation_version,
+        ])
+        ->assertForbidden();
+});
+
+test('an admin can approve an eligible store and re-evaluate its pending products', function () {
+    Queue::fake();
+    $admin = storeModeratingAdmin();
+    $vendor = ProductSecurityFixtures::vendor(storeOverrides: ['status' => 'pending']);
+    $product = ProductSecurityFixtures::product($vendor['store']);
+    $moderation = app(ProductModerationService::class);
+    $moderation->submit($product, $vendor['user'], 'Initial submission.');
+
+    $this
+        ->actingAs($admin, 'admin')
+        ->post(route('admin.stores.approve', $vendor['store']), [
+            'moderation_version' => (int) $vendor['store']->moderation_version,
+        ])
+        ->assertRedirect();
+
+    $store = $vendor['store']->fresh();
+
+    expect($store->status)->toBe(Store::STATUS_APPROVED)
+        ->and($store->is_active)->toBeTrue()
+        ->and($store->approved_at)->not->toBeNull()
+        ->and($store->approved_by)->toBe($admin->getKey());
+
+    $product->refresh();
+
+    expect($product->moderation_version)->toBe(1)
+        ->and($product->approved_status)->toBe(Product::APPROVAL_PENDING);
+
+    Queue::assertPushed(
+        EvaluateProductApprovalContext::class,
+        fn($job): bool => $job->productId === $product->getKey()
+            && $job->moderationVersion === 1
+    );
+});
+
+test('an ineligible store cannot be approved', function () {
+    $admin = storeModeratingAdmin();
+    // A seller who is not a vendor account type cannot have an active store.
+    $vendor = ProductSecurityFixtures::vendor(
+        userOverrides: ['user_type' => 'user'],
+        storeOverrides: ['status' => 'pending', 'approved_at' => null],
+    );
+
+    $this
+        ->actingAs($admin, 'admin')
+        ->post(route('admin.stores.approve', $vendor['store']), [
+            'moderation_version' => (int) $vendor['store']->moderation_version,
+        ])
+        ->assertRedirect();
+
+    expect($vendor['store']->fresh()->status)->toBe(Store::STATUS_PENDING)
+        ->and($vendor['store']->fresh()->is_active)->toBeFalse();
+});
+
+test('rejecting a store requires a reason and fail-closes its approved products', function () {
+    $admin = storeModeratingAdmin();
+    $vendor = ProductSecurityFixtures::vendor(storeOverrides: ['status' => 'approved', 'approved_at' => now()]);
+    $product = ProductSecurityFixtures::product($vendor['store']);
+    $moderation = app(ProductModerationService::class);
+    $review = $moderation->submit($product, $vendor['user'], 'Initial submission.');
+    $moderation->approve($product, null, 'Approved by admin.', $review->version);
+
+    $this
+        ->actingAs($admin, 'admin')
+        ->post(route('admin.stores.reject', $vendor['store']), [
+            'moderation_version' => (int) $vendor['store']->moderation_version,
+            'rejection_reason' => 'Policies and terms were not signed.',
+        ])
+        ->assertRedirect();
+
+    $store = $vendor['store']->fresh();
+
+    expect($store->status)->toBe(Store::STATUS_REJECTED)
+        ->and($store->is_active)->toBeFalse()
+        ->and($store->approved_at)->toBeNull();
+
+    $product->refresh();
+
+    expect($product->approved_status)->toBe(Product::APPROVAL_APPROVED)
+        ->and($product->reviewed_version)->toBe(1)
+        ->and(Product::query()->published()->whereKey($product)->exists())->toBeFalse();
+});
+
+test('suspending a store closes publication without invalidating product content approval', function () {
+    $admin = storeModeratingAdmin();
+    $vendor = ProductSecurityFixtures::vendor(storeOverrides: ['status' => 'approved', 'approved_at' => now()]);
+    $product = ProductSecurityFixtures::product($vendor['store']);
+    $moderation = app(ProductModerationService::class);
+    $review = $moderation->submit($product, $vendor['user'], 'Initial submission.');
+    $moderation->approve($product, null, 'Approved by admin.', $review->version);
+
+    $this
+        ->actingAs($admin, 'admin')
+        ->post(route('admin.stores.suspend', $vendor['store']), [
+            'moderation_version' => (int) $vendor['store']->moderation_version,
+            'reason' => 'Operated without required permits.',
+        ])
+        ->assertRedirect();
+
+    $store = $vendor['store']->fresh();
+
+    expect($store->status)->toBe(Store::STATUS_SUSPENDED)
+        ->and($store->is_active)->toBeFalse()
+        ->and($store->suspended_at)->not->toBeNull();
+
+    $product->refresh();
+
+    expect($product->approved_status)->toBe(Product::APPROVAL_APPROVED)
+        ->and($product->reviewed_version)->toBe(1)
+        ->and(Product::query()->published()->whereKey($product)->exists())->toBeFalse();
+});
+
+test('a suspended store can be reactivated by the admin', function () {
+    $admin = storeModeratingAdmin();
+    $vendor = ProductSecurityFixtures::vendor(storeOverrides: ['status' => 'suspended', 'suspended_at' => now()]);
+
+    $this
+        ->actingAs($admin, 'admin')
+        ->post(route('admin.stores.approve', $vendor['store']), [
+            'moderation_version' => (int) $vendor['store']->moderation_version,
+        ])
+        ->assertRedirect();
+
+    $store = $vendor['store']->fresh();
+
+    expect($store->status)->toBe(Store::STATUS_APPROVED)
+        ->and($store->is_active)->toBeTrue()
+        ->and($store->suspended_at)->toBeNull()
+        ->and($store->approved_at)->not->toBeNull();
+});
+
+test('a rejected or pending store cannot expose publishable products', function () {
+    $vendor = ProductSecurityFixtures::vendor(storeOverrides: ['status' => 'rejected']);
+    $product = ProductSecurityFixtures::product($vendor['store'], [
+        'approved_status' => Product::APPROVAL_APPROVED,
+        'moderation_version' => 1,
+        'reviewed_version' => 1,
+    ]);
+
+    $this
+        ->actingAs($vendor['user'], 'web')
+        ->get("/products/{$product->slug}")
+        ->assertNotFound();
+});
+
+test('a store no-op save does not create a new moderation version', function () {
+    $vendor = ProductSecurityFixtures::vendor(storeOverrides: ['status' => 'approved', 'approved_at' => now()]);
+    $store = $vendor['store'];
+    $originalVersion = (int) $store->moderation_version;
+
+    $this
+        ->actingAs($vendor['user'], 'web')
+        ->put(route('vendor.store-profile.update'), [
+            'name' => $store->name,
+            'currency' => 'MXN',
+            'country' => 'MX',
+            'timezone' => 'America/Mexico_City',
+        ])
+        ->assertSessionHasNoErrors()
+        ->assertRedirect(route('vendor.store-profile.index'));
+
+    $store->refresh();
+
+    expect($store->status)->toBe(Store::STATUS_APPROVED)
+        ->and((int) $store->moderation_version)->toBe($originalVersion)
+        ->and((int) $store->reviewed_version)->toBe($originalVersion);
+});
+
+test('a stale admin approval cannot decide a newer store version', function () {
+    $admin = storeModeratingAdmin();
+    $vendor = ProductSecurityFixtures::vendor(storeOverrides: ['status' => 'pending', 'approved_at' => null]);
+    $store = $vendor['store'];
+
+    $this
+        ->actingAs($vendor['user'], 'web')
+        ->put(route('vendor.store-profile.update'), [
+            'name' => 'Newer Store Version',
+            'currency' => 'MXN',
+            'country' => 'MX',
+            'timezone' => 'America/Mexico_City',
+        ])
+        ->assertSessionHasNoErrors();
+
+    $store->refresh();
+
+    expect((int) $store->moderation_version)->toBe(2)
+        ->and($store->status)->toBe(Store::STATUS_PENDING);
+
+    $this
+        ->actingAs($admin, 'admin')
+        ->postJson(route('admin.stores.approve', $store), [
+            'moderation_version' => 1,
+        ])
+        ->assertStatus(409)
+        ->assertJsonPath('message', 'Store information changed while you were reviewing it. Please review the latest version before making a decision.');
+
+    expect($store->fresh()->status)->toBe(Store::STATUS_PENDING)
+        ->and((int) $store->fresh()->moderation_version)->toBe(2);
+});
+

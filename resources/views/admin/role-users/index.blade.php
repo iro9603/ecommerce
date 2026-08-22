@@ -22,6 +22,36 @@
 
         <div class="card">
             <div class="card-header border-bottom">
+                <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3 w-100">
+                    <div>
+                        <h3 class="card-title mb-1">Role Users</h3>
+                        <p class="card-subtitle text-muted mb-0">
+                            Search role users by name or email.
+                        </p>
+                    </div>
+
+                    <form action="{{ url('admin/role-users') }}" method="GET" class="w-100" style="max-width: 420px;">
+                        <div class="input-group">
+                            <span class="input-group-text bg-transparent">
+                                <i class="ti ti-search"></i>
+                            </span>
+
+                            <input type="text" name="search" value="{{ request('search') }}" class="form-control"
+                                placeholder="Search users..." aria-label="Search users">
+
+                            <button type="submit" class="btn btn-primary">
+                                Search
+                            </button>
+                            @if (isset($_REQUEST['search']))
+                                <a href="{{ url('admin/role-users') }}" class="btn btn-success">
+                                    <i class="bi bi-trash">Limpiar</i>
+                                </a>
+                            @endif
+                        </div>
+                    </form>
+                </div>
+            </div>
+            <div class="card-header border-bottom">
                 <div>
                     <h3 class="card-title mb-0">Role list</h3>
                     <p class="card-subtitle">
@@ -40,6 +70,7 @@
                                     <th>Name</th>
                                     <th>Email</th>
                                     <th>Role</th>
+                                    <th>Status</th>
                                     <th class="text-end">Actions</th>
                                 </tr>
                             </thead>
@@ -78,9 +109,16 @@
                                                 </span>
                                             @endforeach
                                         </td>
+                                        <th>
+                                            @if ($admin->status == 1)
+                                                <span class="badge bg-success text-white">Active</span>
+                                            @elseif($admin->status == 0)
+                                                <span class="badge bg-danger text-white">Inactive</span>
+                                            @endif
+                                        </th>
                                         <td>
                                             <div class="d-flex justify-content-end gap-2">
-                                                @if (!$admin->hasRole('Super Admin'))
+                                                @if (!$admin->hasRole('Super Admin') && $admin->status == 1)
                                                     <a href="{{ route('admin.role-users.edit', $admin) }}"
                                                         class="btn btn-sm btn-outline-primary">
                                                         Edit
@@ -90,6 +128,33 @@
                                                         class="btn btn-sm btn-outline-danger delete-item">
                                                         Delete
                                                     </a>
+                                                @elseif(!$admin->hasRole('Super Admin') && $admin->status == 0)
+                                                    <form action="{{ route('admin.user-role.restore', $admin->id) }}"
+                                                        method="POST" id="miFormulario{{ $admin->id }}" class="d-line">
+                                                        @csrf
+                                                        <button type="submit" class="btn btn-warning btn-md"
+                                                            onclick="preguntar{{ $admin->id }}(event)">
+                                                            <i class="ti ti-rotate-clockwise">Restore</i>
+                                                        </button>
+                                                    </form>
+                                                    <script>
+                                                        function preguntar{{ $admin->id }}(event) {
+                                                            event.preventDefault();
+                                                            Swal.fire({
+                                                                title: "Are you sure to restore this user?",
+                                                                text: "",
+                                                                icon: "warning",
+                                                                showCancelButton: true,
+                                                                confirmButtonColor: "#3085d6",
+                                                                cancelButtonColor: "#d33",
+                                                                confirmButtonText: "Restore"
+                                                            }).then((result) => {
+                                                                if (result.isConfirmed) {
+                                                                    document.getElementById('miFormulario{{ $admin->id }}').submit();
+                                                                }
+                                                            })
+                                                        }
+                                                    </script>
                                                 @endif
                                             </div>
                                         </td>

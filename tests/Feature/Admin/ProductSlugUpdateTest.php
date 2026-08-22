@@ -69,6 +69,7 @@ function productUpdatePayload(Product $product, array $overrides = []): array
         'stock_status' => 'in_stock',
         'status' => 'active',
         'approved_status' => Product::APPROVAL_PENDING,
+        'approval_reason' => 'Pending review reason.',
         'moderation_version' => (int) $product->moderation_version,
         'store' => test()->store->id,
         'categories' => [test()->category->id],

@@ -6,7 +6,7 @@ Esta documentación describe el funcionamiento actual del módulo de productos d
 
 El objetivo del módulo es que una aprobación represente una versión concreta del producto y no un estado que pueda conservarse después de cambiar el contenido. También protege los límites de ownership, los archivos, el HTML enriquecido, los slugs y la generación de variantes.
 
-Estado documentado: **16 de agosto de 2026**.
+Estado documentado: **17 de agosto de 2026**.
 
 ## Respuesta corta sobre la aprobación
 
@@ -64,7 +64,7 @@ Estas reglas deben mantenerse en cualquier evolución futura:
 4. El ownership se autoriza de nuevo después de bloquear el producto dentro de la transacción.
 5. Una decisión administrativa debe indicar la versión esperada.
 6. Un job atrasado nunca puede decidir una versión distinta de la que recibió.
-7. Los archivos digitales se almacenan de forma privada y su tipo final se obtiene del MIME real.
+7. Los archivos digitales se almacenan en un único disco configurado (`config('products.digital_upload.disk')`) de forma privada, su tipo final se obtiene del MIME real y el borrado nunca elige el disco desde la base de datos.
 8. Los productos digitales no se autoaprueban.
 9. La confianza de una tienda es explícita, revocable y auditada.
 10. `approved_status = approved` por sí solo no autoriza publicación.
@@ -105,3 +105,27 @@ $products = Product::query()
 ```
 
 Las consultas administrativas y de vendor no deben usarlo porque necesitan ver borradores, pendientes y rechazados.
+
+## Content vs eligibility context
+
+Product moderation now separates:
+
+- Product content snapshot and SHA-256 content fingerprint.
+- Seller/Store eligibility context stored on `product_approval_reviews.evaluation_context` and `context_hash`.
+
+Store trust/status changes re-evaluate pending Products at their existing Product version. Seller type, KYC, and email losses force a new Product review version and revoke Store auto-approval trust. `Product::published()` additionally requires the current Store moderation version.
+
+## Implemented content/eligibility refactor
+
+Full implementation details are in:
+
+```text
+docs/refactor-implementation.md
+```
+
+The current Product moderation implementation separates Product content
+fingerprints from Seller/Store evaluation context, adds Store version checks to
+`Product::published()`, revokes trust on KYC/email/seller-type losses,
+invalidates Brand/Category/Tag references synchronously, hashes digital files
+with SHA-256, and protects Product/Store restore paths.
+

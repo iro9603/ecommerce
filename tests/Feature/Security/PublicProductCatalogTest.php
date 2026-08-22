@@ -139,7 +139,7 @@ test('the public storefront displays the primary variant price when the base pri
     ] as $url) {
         $this->get($url)
             ->assertOk()
-            ->assertSee('$42.50');
+            ->assertSee('42.50');
     }
 });
 

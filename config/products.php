@@ -2,6 +2,10 @@
 
 return [
     'digital_upload' => [
+        // Storage disk used for both writing and deleting digital product files.
+        // Deletion never trusts a database column: the write path and the delete
+        // path must always target the same configured disk.
+        'disk' => (string) env('PRODUCT_DIGITAL_UPLOAD_DISK', 'local'),
         'max_file_size_kb' => (int) env('PRODUCT_MAX_DIGITAL_FILE_SIZE_KB', 262144),
         'max_chunk_size_kb' => (int) env('PRODUCT_MAX_DIGITAL_CHUNK_SIZE_KB', 10240),
         'max_chunks' => (int) env('PRODUCT_MAX_DIGITAL_CHUNKS', 4096),

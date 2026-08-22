@@ -38,7 +38,7 @@ Los actores son:
 | `app/Services/ProductModerationService.php` | Versionado, snapshot, fingerprint y decisiones. |
 | `app/Services/ProductRiskEvaluator.php` | Riesgo y autoaprobación. |
 | `app/Services/ProductContentSanitizer.php` | Sanitización del HTML enriquecido. |
-| `app/Services/DigitalProductFileUploadService.php` | Upload chunked privado y cuotas. |
+| `app/Services/DigitalProductFileUploadService.php` | Upload chunked privado sobre `config('products.digital_upload.disk')` y cuotas. |
 | `app/Jobs/EvaluateProductForApproval.php` | Evaluación asíncrona de una versión. |
 | `app/Jobs/ReevaluateProductsAfterReferenceChange.php` | Reenvío por cambios en referencias. |
 | `app/Observers/ProductReferenceModerationObserver.php` | Observa Brand, Category y Tag. |
@@ -210,7 +210,7 @@ Transacción
 EvaluateProductForApproval(productId, version)
 ```
 
-El vendor puede preparar productos mientras su tienda está en `draft`, `pending` o `active`, siempre que tenga email verificado, KYC aprobado y no esté suspendido. La publicación y la autoaprobación sí requieren tienda `active`.
+El vendor puede preparar productos mientras su tienda está en `draft`, `pending` o `approved`, siempre que tenga email verificado, KYC aprobado y no esté suspendido. La publicación y la autoaprobación sí requieren tienda `approved`.
 
 ## Cambios realizados por vendor
 
@@ -281,7 +281,7 @@ Una cola detenida deja los productos en `pending`; es un fallo seguro, aunque im
 | Código | Puntos | Causa |
 | --- | ---: | --- |
 | `missing_store` | 100 | No existe tienda. |
-| `store_not_active` | 100 | La tienda no está activa. |
+| `store_not_approved` | 100 | La tienda no está aprobada. |
 | `store_suspended` | 100 | La tienda está suspendida. |
 | `store_requires_manual_review` | 0 | La tienda no tiene confianza explícita. |
 | `missing_seller` | 100 | La tienda no tiene vendedor. |
@@ -319,7 +319,7 @@ El control aparece en la edición admin de productos físicos y digitales cuando
 
 Para activar, la tienda debe:
 
-- estar `active`;
+- estar `approved`;
 - no tener `suspended_at`;
 - pertenecer a un usuario `vendor`;
 - tener email verificado;
@@ -388,7 +388,7 @@ Condiciones comunes:
 1. `user_type === vendor`;
 2. email verificado;
 3. KYC aprobado;
-4. tienda `draft`, `pending` o `active`;
+4. tienda `draft`, `pending` o `approved`;
 5. tienda no suspendida;
 6. para un producto existente, `product.store_id === user.store.id`.
 
@@ -467,7 +467,7 @@ El request de confianza de tienda requiere `enabled` booleano y `reason` de 10�
 2. `status = active`;
 3. `moderation_version > 0`;
 4. `reviewed_version = moderation_version`;
-5. tienda `active`;
+5. tienda `approved`;
 6. tienda no suspendida;
 7. seller con `user_type = vendor`;
 8. seller con email verificado;
@@ -635,3 +635,11 @@ Al agregar una consulta pública:
 2. no sustituirlo por un filtro parcial;
 3. probar tienda inactiva/suspendida, versión obsoleta, tipo/email del seller y KYC;
 4. evitar exponer URLs de archivos o imágenes de productos no publicables.
+
+## Store & Product Moderation Refactor
+
+See `docs/refactor-implementation.md` for the complete implementation record:
+versioned Store moderation, Product content/eligibility separation, KYC/email
+revalidation, synchronous reference invalidation, digital file hashes, and
+soft-delete safety.
+

@@ -183,7 +183,7 @@
                 <div class="col-12">
                     <div class="card">
                         @php
-                            $status = $store->status;
+                            $status = $store?->status;
 
                             $statusConfig = match ($status) {
                                 'draft' => [

@@ -35,12 +35,13 @@ class VendorProductController extends Controller
         Gate::authorize('viewAny', Product::class);
 
         $user = user();
+        $store = $user->store;
 
-        $products = Product::where('store_id', $user->store->id)
+        $products = Product::where('store_id', $store->id)
             ->latest()
             ->paginate(30);
 
-        return view('vendor-dashboard.product.index', compact('products'));
+        return view('vendor-dashboard.product.index', compact('products', 'store'));
     }
 
     public function create(): View
@@ -102,14 +103,14 @@ class VendorProductController extends Controller
             return response()->json([
                 'id' => $product->id,
                 'status' => 'success',
-                'redirect_url' => route('vendor.products.edit', $product->id).'#product-images',
+                'redirect_url' => route('vendor.products.edit', $product->id) . '#product-images',
                 'message' => 'Product created successfully.',
             ]);
         } else {
             return response()->json([
                 'id' => $product->id,
                 'status' => 'success',
-                'redirect_url' => route('vendor.digital-products.edit', $product->id).'#product-images',
+                'redirect_url' => route('vendor.digital-products.edit', $product->id) . '#product-images',
                 'message' => 'Product created successfully.',
             ]);
         }
@@ -263,7 +264,7 @@ class VendorProductController extends Controller
                 ->whereIn('id', collect($images)->pluck('id'))
                 ->lockForUpdate()
                 ->get()
-                ->keyBy(fn (ProductImage $image): int => (int) $image->getKey());
+                ->keyBy(fn(ProductImage $image): int => (int) $image->getKey());
             abort_unless($storedImages->count() === count($images), 404);
             $hasMaterialChanges = false;
 
@@ -304,13 +305,13 @@ class VendorProductController extends Controller
             $product = $this->lockProductForMutation($product, 'update');
             $originalCategoryIds = $product->categories()
                 ->pluck('categories.id')
-                ->map(fn ($id): int => (int) $id)
+                ->map(fn($id): int => (int) $id)
                 ->sort()
                 ->values()
                 ->all();
             $originalTagIds = $product->tags()
                 ->pluck('tags.id')
-                ->map(fn ($id): int => (int) $id)
+                ->map(fn($id): int => (int) $id)
                 ->sort()
                 ->values()
                 ->all();
@@ -351,7 +352,7 @@ class VendorProductController extends Controller
 
             /** Attach categories */
             $categoryIds = collect($request->validated('categories'))
-                ->map(fn ($id): int => (int) $id)
+                ->map(fn($id): int => (int) $id)
                 ->sort()
                 ->values()
                 ->all();
@@ -359,7 +360,7 @@ class VendorProductController extends Controller
 
             /** Attach tags */
             $tagIds = collect($request->validated('tags', []))
-                ->map(fn ($id): int => (int) $id)
+                ->map(fn($id): int => (int) $id)
                 ->sort()
                 ->values()
                 ->all();
@@ -400,11 +401,11 @@ class VendorProductController extends Controller
             'attribute_id' => ['nullable', 'integer'],
             'attribute_name' => ['required', 'string', 'max:255'],
             'attribute_type' => ['required', 'string', 'in:text,color'],
-            'label' => ['required', 'array', 'min:1', 'max:'.$maxValuesPerAttribute],
+            'label' => ['required', 'array', 'min:1', 'max:' . $maxValuesPerAttribute],
             'label.*' => ['required', 'string', 'max:255'],
-            'value_id' => ['nullable', 'array', 'max:'.$maxValuesPerAttribute],
+            'value_id' => ['nullable', 'array', 'max:' . $maxValuesPerAttribute],
             'value_id.*' => ['nullable', 'integer', 'distinct'],
-            'color_value' => ['nullable', 'array', 'max:'.$maxValuesPerAttribute],
+            'color_value' => ['nullable', 'array', 'max:' . $maxValuesPerAttribute],
             'color_value.*' => ['nullable', 'string', 'max:32'],
         ]);
 
@@ -852,7 +853,7 @@ class VendorProductController extends Controller
             default => 1,
         };
 
-        return max(1, (int) config('products.variants.'.$key, $default));
+        return max(1, (int) config('products.variants.' . $key, $default));
     }
 
     public function cartesianProduct(Collection $attributeGroups): array

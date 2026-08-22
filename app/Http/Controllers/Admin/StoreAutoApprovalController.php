@@ -42,9 +42,6 @@ class StoreAutoApprovalController extends Controller implements HasMiddleware
                 ->whereKey($store->getKey())
                 ->firstOrFail(['id', 'seller_id']);
 
-            // Lock seller before store. User type changes use the same order,
-            // so an enable request cannot race a role transition or deadlock
-            // because of inverted locks.
             if ($storeReference->seller_id !== null) {
                 User::query()
                     ->whereKey($storeReference->seller_id)
@@ -52,29 +49,29 @@ class StoreAutoApprovalController extends Controller implements HasMiddleware
                     ->first();
             }
 
-            $store = Store::query()
+            $lockedStore = Store::query()
                 ->whereKey($store->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            if ($store->seller_id !== $storeReference->seller_id) {
+            if ($lockedStore->seller_id !== $storeReference->seller_id) {
                 throw ValidationException::withMessages([
                     'enabled' => 'The store seller changed concurrently. Retry the operation.',
                 ]);
             }
 
-            $store->load(['seller.kyc']);
+            $lockedStore->load(['seller.kyc']);
             $enabled = $request->boolean('enabled');
-            $previous = (bool) $store->auto_approve_products;
-            $eligibility = $this->eligibilitySnapshot($store);
+            $previous = (bool) $lockedStore->auto_approve_products;
+            $eligibility = $this->eligibilitySnapshot($lockedStore);
             $reason = trim((string) $request->validated('reason'));
 
             if ($enabled && ! $eligibility['eligible']) {
                 if ($previous) {
                     $failClosedReason = 'Automatic fail-closed trust revocation: '.$reason;
-                    $store->forceFill(['auto_approve_products' => false])->save();
+                    $lockedStore->forceFill(['auto_approve_products' => false])->save();
                     $productIds = Product::withTrashed()
-                        ->where('store_id', $store->getKey())
+                        ->where('store_id', $lockedStore->getKey())
                         ->whereIn('approved_status', [
                             Product::APPROVAL_APPROVED,
                             Product::APPROVAL_PENDING,
@@ -100,7 +97,7 @@ class StoreAutoApprovalController extends Controller implements HasMiddleware
                         ]);
 
                     $audit = StoreAutoApprovalAudit::query()->create([
-                        'store_id' => $store->getKey(),
+                        'store_id' => $lockedStore->getKey(),
                         'admin_id' => $admin->getKey(),
                         'previous_value' => true,
                         'new_value' => false,
@@ -123,7 +120,7 @@ class StoreAutoApprovalController extends Controller implements HasMiddleware
                 }
 
                 throw ValidationException::withMessages([
-                    'enabled' => 'The store must be active, unsuspended, owned by a verified vendor, and have approved KYC.',
+                    'enabled' => 'The store must be approved, unsuspended, owned by a verified vendor, and have approved KYC.',
                 ]);
             }
 
@@ -135,34 +132,16 @@ class StoreAutoApprovalController extends Controller implements HasMiddleware
                 ];
             }
 
-            $store->forceFill(['auto_approve_products' => $enabled])->save();
-            $resubmittedProducts = 0;
+            $lockedStore->forceFill(['auto_approve_products' => $enabled])->save();
 
-            Product::query()
-                ->where('store_id', $store->getKey())
-                ->where('approved_status', Product::APPROVAL_PENDING)
-                ->orderBy('id')
-                ->each(function (Product $product) use (
-                    $moderation,
-                    $reason,
-                    &$resubmittedProducts
-                ): void {
-                    $moderation->submit(
-                        $product,
-                        null,
-                        'Store automatic approval setting changed: '.$reason,
-                    );
-                    $resubmittedProducts++;
-                });
-
-            StoreAutoApprovalAudit::query()->create([
-                'store_id' => $store->getKey(),
+            $audit = StoreAutoApprovalAudit::query()->create([
+                'store_id' => $lockedStore->getKey(),
                 'admin_id' => $admin->getKey(),
                 'previous_value' => $previous,
                 'new_value' => $enabled,
                 'reason' => $reason,
                 'eligibility_snapshot' => $eligibility,
-                'pending_products_resubmitted' => $resubmittedProducts,
+                'pending_products_resubmitted' => 0,
                 'ip_address' => $request->ip(),
                 'user_agent' => mb_substr((string) $request->userAgent(), 0, 2000),
             ]);
@@ -170,7 +149,10 @@ class StoreAutoApprovalController extends Controller implements HasMiddleware
             return [
                 'changed' => true,
                 'enabled' => $enabled,
-                'resubmitted_products' => $resubmittedProducts,
+                'resubmitted_products' => 0,
+                'audit_id' => $audit->getKey(),
+                'store_id' => $lockedStore->getKey(),
+                'context_reason' => 'Store automatic approval setting changed: '.$reason,
             ];
         }, 5);
 
@@ -188,7 +170,7 @@ class StoreAutoApprovalController extends Controller implements HasMiddleware
                     continue;
                 }
 
-                $moderation->submit($product, null, $result['remoderation_reason']);
+                $moderation->forceRevalidate($product, null, $result['remoderation_reason']);
                 StoreAutoApprovalAudit::query()
                     ->whereKey($result['remoderation_audit_id'])
                     ->increment('pending_products_resubmitted');
@@ -197,6 +179,19 @@ class StoreAutoApprovalController extends Controller implements HasMiddleware
             throw ValidationException::withMessages([
                 'enabled' => 'Automatic approval was revoked because the store is no longer eligible. Review its seller and security status before enabling it again.',
             ]);
+        }
+
+        if ($result['changed'] && ! ($result['ineligible_request'] ?? false)) {
+            $currentStore = Store::query()->findOrFail($result['store_id']);
+            $resubmitted = $moderation->reevaluatePendingStoreContext(
+                $currentStore,
+                $result['context_reason'],
+            );
+
+            StoreAutoApprovalAudit::query()
+                ->whereKey($result['audit_id'])
+                ->update(['pending_products_resubmitted' => $resubmitted]);
+            $result['resubmitted_products'] = $resubmitted;
         }
 
         return response()->json([
@@ -224,7 +219,7 @@ class StoreAutoApprovalController extends Controller implements HasMiddleware
             'kyc_status' => $seller?->kyc?->status,
         ];
 
-        $snapshot['eligible'] = $snapshot['store_status'] === 'active'
+        $snapshot['eligible'] = $snapshot['store_status'] === 'approved'
             && $snapshot['store_not_suspended']
             && $snapshot['seller_is_vendor']
             && $snapshot['seller_email_verified']

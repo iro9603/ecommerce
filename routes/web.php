@@ -42,7 +42,9 @@ Route::group(['prefix' => 'vendor', 'as' => 'vendor.', 'middleware' => ['auth', 
 
     /** Product Routes */
     Route::get('/products', [VendorProductController::class, 'index'])->name('products.index');
-    Route::get('/products/{type}/create', [VendorProductController::class, 'create'])->name('products.create');
+    Route::get('/products/{type}/create', [VendorProductController::class, 'create'])
+        ->whereIn('type', ['physical', 'digital'])
+        ->name('products.create');
     Route::post('/products/{type}/create', [VendorProductController::class, 'store'])
         ->whereIn('type', ['physical', 'digital'])
         ->name('products.store');

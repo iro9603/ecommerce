@@ -13,19 +13,64 @@
                 </div>
 
                 <div class="col-auto ms-auto">
-                    <div class="dropdown">
-                        <button class="btn btn-primary dropdown-toggle" type="button" id="dropdownMenuButton"
-                            data-bs-toggle="dropdown" aria-expanded="false">
-                            Create Product
-                        </button>
+                    @if ($store->status !== 'approved' || !$store->is_active)
+                        <div class="d-flex align-items-start gap-2 px-3 py-2 rounded bg-warning-lt text-warning"
+                            style="max-width: 360px;">
 
-                        <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
-                            <a class="dropdown-item"
-                                href="{{ route('vendor.products.create', ['type' => 'physical']) }}">Physical</a>
-                            <a class="dropdown-item"
-                                href="{{ route('vendor.products.create', ['type' => 'digital']) }}">Digital</a>
+                            <span class="avatar avatar-xs bg-warning text-white rounded-circle flex-shrink-0">
+                                <i class="ti ti-alert-triangle"></i>
+                            </span>
+
+                            <div class="lh-sm">
+                                <div class="fw-semibold small">Store unavailable</div>
+
+                                <div class="text-secondary small mt-1">
+                                    Your store is under review. Products can be created once your store is approved.
+                                </div>
+                            </div>
                         </div>
-                    </div>
+                    @else
+                        <div class="dropdown">
+                            <button class="btn btn-primary dropdown-toggle d-flex align-items-center gap-2" type="button"
+                                id="createProductDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="ti ti-plus"></i>
+                                Create Product
+                            </button>
+
+                            <div class="dropdown-menu dropdown-menu-end shadow-sm" aria-labelledby="createProductDropdown">
+
+                                <a class="dropdown-item d-flex align-items-center gap-2 py-2"
+                                    href="{{ route('vendor.products.create', ['type' => 'physical']) }}">
+                                    <span class="avatar avatar-sm bg-blue-lt text-blue">
+                                        <i class="ti ti-package"></i>
+                                    </span>
+
+                                    <div>
+                                        <div class="fw-medium">Physical Product</div>
+                                        <small class="text-secondary">
+                                            Products that require shipping
+                                        </small>
+                                    </div>
+                                </a>
+
+                                <div class="dropdown-divider"></div>
+
+                                <a class="dropdown-item d-flex align-items-center gap-2 py-2"
+                                    href="{{ route('vendor.products.create', ['type' => 'digital']) }}">
+                                    <span class="avatar avatar-sm bg-purple-lt text-purple">
+                                        <i class="ti ti-file-download"></i>
+                                    </span>
+
+                                    <div>
+                                        <div class="fw-medium">Digital Product</div>
+                                        <small class="text-secondary">
+                                            Files, downloads or digital content
+                                        </small>
+                                    </div>
+                                </a>
+                            </div>
+                        </div>
+                    @endif
                 </div>
             </div>
         </div>

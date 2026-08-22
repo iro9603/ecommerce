@@ -23,6 +23,7 @@ class AdminSeeder extends Seeder
             [
                 'name' => 'Super Admin',
                 'password' => bcrypt('1234'),
+                'status' => true
             ]
         );
         $admin->forceFill(['name' => 'Super Admin'])->save();

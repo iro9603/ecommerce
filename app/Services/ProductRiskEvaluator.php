@@ -18,7 +18,7 @@ class ProductRiskEvaluator
     {
         // Security relationships must be refreshed for every assessment. A
         // previously loaded seller must not preserve stale eligibility data.
-        $product->load(['store.seller.kyc', 'variants']);
+        $product->load(['store.seller.kyc', 'variants', 'files']);
         $product->loadCount(['categories', 'files', 'images']);
 
         $reasons = [];
@@ -26,8 +26,8 @@ class ProductRiskEvaluator
         if (! $product->store) {
             $this->addReason($reasons, 'missing_store', 100, 'The product does not belong to a store.');
         } else {
-            if ($product->store->status !== 'active') {
-                $this->addReason($reasons, 'store_not_active', 100, 'The store is not active.');
+            if ($product->store->status !== 'approved') {
+                $this->addReason($reasons, 'store_not_approved', 100, 'The store is not approved.');
             }
 
             if ($product->store->suspended_at !== null) {
@@ -77,12 +77,14 @@ class ProductRiskEvaluator
 
             if ($product->files_count === 0) {
                 $this->addReason($reasons, 'digital_product_without_file', 40, 'The digital product does not have a file.');
+            } elseif ($product->files->contains(fn ($file): bool => $file->sha256 === null)) {
+                $this->addReason($reasons, 'digital_file_hash_missing', 40, 'The digital product has a file without a SHA-256 content hash.');
             }
         }
 
         $hasBasePrice = $product->price !== null && (float) $product->price >= 0;
         $hasSellableVariant = $product->variants->contains(
-            fn ($variant): bool => (bool) $variant->is_active
+            fn($variant): bool => (bool) $variant->is_active
                 && $variant->price !== null
                 && (float) $variant->price >= 0
         );
@@ -160,7 +162,7 @@ class ProductRiskEvaluator
 
         $score = min(100, array_sum(array_column($reasons, 'score')));
         $blocksAutomaticApproval = collect($reasons)->contains(
-            fn (array $reason) => $reason['blocks_automatic_approval']
+            fn(array $reason) => $reason['blocks_automatic_approval']
         );
         $maximumScore = max(0, min(100, (int) config('product_moderation.maximum_automatic_risk_score', 20)));
 
