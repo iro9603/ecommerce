@@ -10,6 +10,7 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\Middleware;
 use Illuminate\Routing\Controllers\HasMiddleware;
+use Illuminate\Support\Facades\DB;
 
 class BrandController extends Controller implements HasMiddleware
 {
@@ -92,14 +93,38 @@ class BrandController extends Controller implements HasMiddleware
             'name' => ['required', 'string', 'max:255'],
         ]);
 
-        $brand->name = $request->name;
+        $newImage = null;
         if ($request->hasFile('brand_logo')) {
-            $logoPath = $this->uploadFile($request->file('brand_logo'), $brand->image);
-            $brand->image = $logoPath;
+            $newImage = $this->uploadFile($request->file('brand_logo'), null);
         }
-        $brand->slug = \Str::slug($request->name);
-        $brand->is_active = $request->has('status') ? 1 : 0;
-        $brand->save();
+
+        try {
+            $oldImage = DB::transaction(function () use ($brand, $request, $newImage): ?string {
+                $current = Brand::query()->whereKey($brand->getKey())->lockForUpdate()->firstOrFail();
+                $oldImage = $current->image;
+                $current->name = $request->name;
+                $current->slug = \Str::slug($request->name);
+                $current->is_active = $request->has('status') ? 1 : 0;
+
+                if ($newImage !== null) {
+                    $current->image = $newImage;
+                }
+
+                $current->save();
+
+                return $oldImage;
+            }, 3);
+        } catch (\Throwable $exception) {
+            if ($newImage !== null) {
+                $this->deleteFile($newImage);
+            }
+
+            throw $exception;
+        }
+
+        if ($newImage !== null && $oldImage !== null && $oldImage !== $newImage) {
+            $this->deleteMediaAfterCommit($oldImage);
+        }
 
 
         AlertService::created();
@@ -112,10 +137,32 @@ class BrandController extends Controller implements HasMiddleware
      */
     public function destroy(Brand $brand)
     {
-        $this->deleteFile($brand->image);
+        $image = DB::transaction(function () use ($brand): ?string {
+            $current = Brand::query()->whereKey($brand->getKey())->lockForUpdate()->firstOrFail();
+            $image = $current->image;
+            $current->delete();
 
-        $brand->delete();
+            return $image;
+        }, 3);
+        $this->deleteMediaAfterCommit($image);
         AlertService::deleted();
         return response()->json(['status' => 'success', 'message' => 'Brand deleted successfully.']);
+    }
+
+    private function deleteMediaAfterCommit(?string $path): void
+    {
+        if ($path === null) {
+            return;
+        }
+
+        $connection = DB::connection();
+
+        if ($connection->transactionLevel() > 0) {
+            $connection->afterCommit(fn () => $this->deleteFile($path));
+
+            return;
+        }
+
+        $this->deleteFile($path);
     }
 }

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ProductApprovalReview extends Model
 {
@@ -65,5 +66,11 @@ class ProductApprovalReview extends Model
     public function reviewer(): BelongsTo
     {
         return $this->belongsTo(Admin::class, 'reviewed_by');
+    }
+
+    public function events(): HasMany
+    {
+        return $this->hasMany(ProductModerationEvent::class)
+            ->orderBy('id');
     }
 }

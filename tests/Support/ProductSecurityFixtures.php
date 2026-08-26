@@ -30,6 +30,7 @@ final class ProductSecurityFixtures
             'name' => 'Security Store ' . $identifier,
             'slug' => 'security-store-' . $identifier,
             'status' => 'approved',
+            'is_active' => ($storeOverrides['status'] ?? 'approved') === 'approved',
             'approved_at' => now(),
             'suspended_at' => null,
             'auto_approve_products' => false,
@@ -54,8 +55,18 @@ final class ProductSecurityFixtures
             'document_type' => 'id_card',
             'document_number' => $identifier,
             'document_country' => 'MX',
+            'document_expiry_date' => now()->addYear()->toDateString(),
             'document_front_path' => 'kyc/front.jpg',
         ], $kycOverrides));
+
+        if ($store->auto_approve_products) {
+            $store->forceFill([
+                'auto_approval_user_epoch' => (int) $user->eligibility_epoch,
+                'auto_approval_kyc_id' => $kyc->getKey(),
+                'auto_approval_kyc_epoch' => (int) $kyc->eligibility_epoch,
+                'auto_approval_store_epoch' => (int) $store->eligibility_epoch,
+            ])->saveQuietly();
+        }
 
         return compact('user', 'store', 'kyc');
     }
@@ -64,7 +75,7 @@ final class ProductSecurityFixtures
     {
         $identifier = Str::uuid()->toString();
 
-        return Product::forceCreate(array_merge([
+        $attributes = array_merge([
             'store_id' => $store->getKey(),
             'product_type' => 'physical',
             'name' => 'Security Product ' . $identifier,
@@ -76,7 +87,21 @@ final class ProductSecurityFixtures
             'in_stock' => true,
             'status' => 'active',
             'approved_status' => Product::APPROVAL_PENDING,
-        ], $overrides));
+        ], $overrides);
+
+        if (($attributes['approved_status'] ?? null) === Product::APPROVAL_APPROVED) {
+            $store->loadMissing('seller.kyc');
+            $attributes += [
+                'reviewed_user_eligibility_epoch' => (int) $store->seller->eligibility_epoch,
+                'reviewed_kyc_id' => $store->seller->kyc->getKey(),
+                'reviewed_kyc_eligibility_epoch' => (int) $store->seller->kyc->eligibility_epoch,
+                'reviewed_store_eligibility_epoch' => (int) $store->eligibility_epoch,
+                'reviewed_context_hash' => hash('sha256', 'security-fixture-context'),
+                'reviewed_policy_version' => (string) config('product_moderation.policy_version'),
+            ];
+        }
+
+        return Product::forceCreate($attributes);
     }
 
     public static function admin(): Admin

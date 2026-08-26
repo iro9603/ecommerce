@@ -69,6 +69,11 @@ class Store extends Model
             'submitted_at' => 'datetime',
             'moderation_version' => 'integer',
             'reviewed_version' => 'integer',
+            'eligibility_epoch' => 'integer',
+            'auto_approval_user_epoch' => 'integer',
+            'auto_approval_kyc_id' => 'integer',
+            'auto_approval_kyc_epoch' => 'integer',
+            'auto_approval_store_epoch' => 'integer',
         ];
     }
 

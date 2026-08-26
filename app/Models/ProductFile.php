@@ -14,4 +14,11 @@ class ProductFile extends Model
         'size',
         'sha256',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'size' => 'integer',
+        ];
+    }
 }

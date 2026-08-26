@@ -3,11 +3,12 @@
 use App\Http\Controllers\Frontend\VendorProductController;
 use App\Models\ProductImage;
 use App\Services\ProductModerationService;
+use App\Services\ProductMediaStorageService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Storage;
 use Tests\Support\ProductSecurityFixtures;
 
 test('a stale owned product is reauthorized after locking and its uploaded image is compensated', function () {
@@ -15,13 +16,7 @@ test('a stale owned product is reauthorized after locking and its uploaded image
     $newOwner = ProductSecurityFixtures::vendor();
     $product = ProductSecurityFixtures::product($owner['store']);
     $staleProduct = $product->fresh();
-    $uploadDirectory = public_path('uploads');
-    File::ensureDirectoryExists($uploadDirectory);
-    $filesBefore = collect(File::files($uploadDirectory))
-        ->map(fn (SplFileInfo $file): string => $file->getPathname())
-        ->sort()
-        ->values()
-        ->all();
+    Storage::fake('private');
 
     DB::table('products')
         ->where('id', $product->getKey())
@@ -36,15 +31,10 @@ test('a stale owned product is reauthorized after locking and its uploaded image
         $request,
         $staleProduct,
         app(ProductModerationService::class),
+        app(ProductMediaStorageService::class),
     ))->toThrow(AuthorizationException::class);
 
-    $filesAfter = collect(File::files($uploadDirectory))
-        ->map(fn (SplFileInfo $file): string => $file->getPathname())
-        ->sort()
-        ->values()
-        ->all();
-
-    expect($filesAfter)->toBe($filesBefore)
+    expect(Storage::disk('private')->allFiles('uploads'))->toBe([])
         ->and(ProductImage::query()->where('product_id', $product->getKey())->exists())->toBeFalse();
 });
 

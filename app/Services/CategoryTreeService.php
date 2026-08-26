@@ -91,8 +91,14 @@ class CategoryTreeService
     public function updateOrder(array $nodes): void
     {
         DB::transaction(function () use ($nodes) {
-            $this->updateTree($nodes, null);
-        });
+            $locked = Category::query()
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->keyBy(fn (Category $category): int => (int) $category->getKey());
+
+            $this->updateTree($nodes, null, $locked);
+        }, 3);
     }
 
     private function buildNested(Collection $groups, ?int $parentId, int $depth, int $maxDepth): array
@@ -151,18 +157,22 @@ class CategoryTreeService
         return null;
     }
 
-    private function updateTree(array $nodes, ?int $parentId): void
+    private function updateTree(array $nodes, ?int $parentId, Collection $locked): void
     {
         foreach ($nodes as $position => $node) {
-            Category::query()
-                ->whereKey((int) $node['id'])
-                ->update([
-                    'parent_id' => $parentId,
-                    'position' => $position,
-                ]);
+            $category = $locked->get((int) $node['id']);
+            abort_unless($category instanceof Category, 422, 'Unknown category in order payload.');
+            $category->forceFill([
+                'parent_id' => $parentId,
+                'position' => $position,
+            ]);
+
+            if ($category->isDirty()) {
+                $category->save();
+            }
 
             if (isset($node['children']) && is_array($node['children'])) {
-                $this->updateTree($node['children'], (int) $node['id']);
+                $this->updateTree($node['children'], (int) $node['id'], $locked);
             }
         }
     }

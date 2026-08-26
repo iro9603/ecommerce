@@ -13,9 +13,7 @@
 
         <div class="row">
             @forelse ($products as $product)
-                <div class="col-6 col-lg-4 col-xl-3 col-xxl-2">
-                    @include('frontend.product.partials.card', ['product' => $product])
-                </div>
+                <x-frontend.product-card :product="$product" />
             @empty
                 <div class="col-12">
                     <p class="text-muted">No products are available right now.</p>

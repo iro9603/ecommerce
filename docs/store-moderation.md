@@ -1,173 +1,198 @@
-# Moderation de tiendas (Store approval flow)
+# Moderación y publicación de tiendas
 
-Este documento describe el flujo de aprobación de tiendas creado para que un
-administrador revise y active la tienda de un vendor, y para que cualquier
-cambio de perfil desactive la tienda (y revise sus productos) hasta una nueva
-aprobación.
+Este documento describe el contrato vigente de moderación de Store. La fuente
+de verdad es **StoreModerationService**, junto con
+**StoreStateTransitionPolicy**, **SellerEligibilityService** y los observers de
+elegibilidad y soft delete.
 
-## Roles y estados de la tienda
+## Invariante de publicación
 
-El campo `stores.status` admite:
+Una Store sólo es publicable cuando se cumplen simultáneamente:
 
-| Estado | Significado |
-| --- | --- |
-| `draft` | Creada pero aún no enviada. |
-| `pending` | Enviada a revisión; requiere decisión de un admin. |
-| `approved` | Aprobada y publicada; `is_active = true`. |
-| `rejected` | Rechazada por un admin con motivo. |
-| `suspended` | Suspendida por un admin; no vende. |
+- **status = approved**;
+- **is_active = true**;
+- **suspended_at** es nulo;
+- **moderation_version > 0**;
+- **reviewed_version = moderation_version**;
+- el seller es vendor, tiene email verificado y KYC vigente.
 
-La aprobación también registra:
-- `approved_at` / `approved_by` (admin que aprobó la última vez).
-- `rejected_at` / `rejection_reason` (al rechazar).
-- `suspended_at` (al suspender).
+El KYC debe estar approved, tener expiración no nula y
+**document_expiry_date >= hoy** según **config('app.timezone')**. La fecha de
+expiración es inclusiva; una fecha nula falla cerrada.
 
-## Reglas de cierre (fail-closed)
+**Product::published()** añade las barreras del producto y compara los epochs
+de seller, KYC y Store fijados en su decisión. Por ello, un Product puede
+conservar **approved_status = approved** y quedar fuera del catálogo si cambia
+su contexto de elegibilidad.
 
-- Un producto solo se publica si su tienda está `approved` (`status = approved`)
-  y `suspended_at` es nulo (ver `Product::scopePublished` y
-  `ProductRiskEvaluator`).
-- Si la tienda sale de `approved` (se edita, se rechaza o se suspende), todos sus
-  productos `approved` se marcan `pending`, se limpian `reviewed_version`,
-  `approved_at`, `approved_by`, el fingerprint y la evaluación de riesgo.
-  Así nada conserva una publicación anterior y la decisión no re-aprueba datos
-  obsoletos.
-- Al volver a aprobar la tienda, los productos pendientes se re-envían por el
-  evaluador (`ProductModerationService::submit`) para decidir de nuevo si se
-  auto-aprueban.
+## Estados y transiciones formales
 
-## `StoreModerationService`
+Los estados son **draft**, **pending**, **approved**, **rejected** y
+**suspended**. Sólo se permiten estas transiciones:
 
-Servicio central en `app/Services/StoreModerationService.php`. Cada transición
-bloquea la tienda (`lockForUpdate`) y opera en una transacción.
+| Acción | Origen | Destino | Efecto |
+| --- | --- | --- | --- |
+| submit | draft, pending, rejected, approved | pending | Desactiva, versiona si cambió el snapshot y revoca trust. |
+| approve | pending | approved | Revisa la versión actual y activa. |
+| reject | pending | rejected | Desactiva y registra el rechazo. |
+| suspend | approved | suspended | Desactiva y registra la suspensión. |
+| restore | suspended | approved | Revalida elegibilidad, revisa y reactiva. |
 
-| Método | Efecto |
-| --- | --- |
-| `submitForReview(Store, reason)` | Pone la tienda `pending`, `is_active=false` y limpia la aprobación previa. Si estaba `approved`, invalida productos. |
-| `approve(Store, Admin)` | Activa la tienda, graba `approved_at`/`approved_by` y re-envía productos pendientes. Exige eligible. |
-| `reject(Store, Admin, reason)` | Marca `rejected` con motivo; invalida productos si estaba `approved`. |
-| `suspend(Store, Admin, reason)` | Marca `suspended` con `suspended_at`; invalida productos si estaba `approved`. |
-| `restore(Store, Admin)` | Re-aprueba una tienda suspendida (misma lógica que `approve`). |
+Todo otro par origen/acción produce un conflicto de dominio y deja la base sin
+cambios. Reject/suspend propagan el HTTP 409; approve/restore lo presentan como
+alerta con redirect en la UI actual. En particular, **approve** no sustituye a
+**restore**, una Store suspendida no admite **submit**, y sólo una Store pending
+puede rechazarse. El restore de una suspensión es distinto del restore de
+Eloquent tras un soft delete.
 
-Para aprobar se exige que el seller sea `vendor`, tenga email verificado y KYC
-`approved`; en caso contrario el servicio aborta con 422. Una tienda suspendida
-**sí** puede aprobarse/restaurarse: `approve()`/`restore()` son justamente la
-acción que levanta la suspensión (`suspended_at` vuelve a `null`).
+Toda decisión de Store limpia **auto_approve_products** y sus pins. Aprobar o
+restaurar una Store no vuelve a confiar automáticamente en ella.
 
-Cada acción mantiene `is_active` de forma coherente:
+## Versionado y decisiones stale
 
-| Acción | `status` | `is_active` |
+Cada envío material mantiene **moderation_version**, **reviewed_version**,
+**submitted_at**, un SHA-256 en **moderation_fingerprint**, motivo y snapshot
+en **store_approval_reviews**.
+
+Los endpoints administrativos requieren **moderation_version**. Dentro de la
+transacción se bloquean seller y Store y se compara esa versión con
+**expectedVersion**:
+
+- si coincide, se valida y aplica la transición;
+- si no coincide, no se escribe ninguna decisión;
+- JSON recibe 409;
+- HTML vuelve con error de **moderation_version**.
+
+El admin debe recargar y revisar la versión nueva; nunca debe forzarla desde el
+cliente. Un submit pending sin cambios es idempotente si ya existe la revisión
+pending de la misma versión y fingerprint. Un guardado no-op del perfil no
+incrementa la versión.
+
+## Actualización atómica del perfil y medios
+
+Los campos materiales incluyen nombre, slug, logo, banner, contacto,
+descripciones, dirección, currency, country, timezone, SEO, enlaces sociales y
+seller. Un cambio material llama a **submitForReview()**; un cambio no material
+no invalida la decisión.
+
+**StoreController::update**:
+
+1. sanitiza las descripciones y valida campos, MIME y tamaños;
+2. escribe logo/banner nuevos en **public/uploads/stores**;
+3. llama a **StoreModerationService::updateProfile()**;
+4. el servicio bloquea seller y Store dentro de una transacción;
+5. rechaza seller eliminado/no vendor y Store soft-deleted;
+6. guarda perfil y revisión en la misma transacción;
+7. después del commit borra los medios sustituidos.
+
+Si falla upload, guardado o moderación, se eliminan los medios nuevos como
+compensación. Con una transacción exterior se usan **afterCommit** y
+**afterRollBack**. El filesystem no es transaccional: un fallo de compensación
+puede dejar un archivo huérfano, pero no debe dejar un perfil parcialmente
+aprobado. Los errores de borrado deben monitorearse.
+
+Los medios de Store siguen siendo públicos bajo **public/uploads/stores**. No
+deben confundirse con los medios de Product, que usan un disco privado y una
+ruta controlada.
+
+## is_active es una barrera de venta
+
+**is_active** no es un alias del estado:
+
+| Acción | status | is_active |
 | --- | --- | --- |
-| `approve` / `restore` | `approved` | `true` |
-| `reject` | `rejected` | `false` |
-| `suspend` | `suspended` | `false` |
-| `submitForReview` (editar perfil) | `pending` | `false` |
+| submit | pending | false |
+| approve | approved | true |
+| reject | rejected | false |
+| suspend | suspended | false |
+| restore | approved | true |
+| soft delete / restore de Eloquent | pending | false |
 
-## Alta de cuentas vendor
+Una escritura que deje **approved + is_active=false** permanece fail-closed.
+No se corrige cambiando sólo el booleano: debe repetirse el flujo de moderación.
 
-El registro normal (`/register`) crea siempre una cuenta `user` (cliente). La
-opción «I am a vendor» fue retirada de esa vista. Quien quiera vender debe
-registrarse por la ruta dedicada:
+## Epochs, trust y protección ABA
 
-```text
-GET  /vendor/register  vendor.register         (vista vendor-register)
-POST /vendor/register  vendor.register.store   (crea cuenta user_type=vendor)
-```
+Para impedir que una secuencia A → B → A reactive una decisión antigua existen
+generaciones monotónicas:
 
-Controladores:
-- `app/Http/Controllers/Auth/RegisteredUserController.php` → siempre `user`.
-- `app/Http/Controllers/Auth/VendorRegisterController.php` → siempre `vendor`.
+- **users.eligibility_epoch** rota al cambiar tipo, email o verificación;
+- **kycs.eligibility_epoch** rota al cambiar estado o expiración;
+- **stores.eligibility_epoch** rota al cambiar seller, estado, actividad,
+  suspensión, versiones o trust;
+- el grant guarda **auto_approval_user_epoch**, **auto_approval_kyc_id**,
+  **auto_approval_kyc_epoch** y **auto_approval_store_epoch**;
+- cada decisión de Product guarda pins equivalentes y policy version.
 
-Vistas:
-- `resources/views/auth/register.blade.php` (solo cliente).
-- `resources/views/auth/vendor-register.blade.php` (vendor).
+Los observers rotan generaciones.
+**SellerEligibilityInvalidationService** revoca trust, limpia pins, audita una
+revocación existente y crea un **seller_eligibility_event** idempotente. No
+necesita cambiar contenido ni **products.moderation_version**: el scope público
+detecta el pin stale en cada consulta. Para volver a publicar se requiere una
+decisión de producto con contexto vigente.
 
-Tras registrarse, el vendor es dirigido a `vendor.dashboard`; como su email aún
-no está verificado, el middleware `verified` lo envía a la pantalla de
-verificación antes de poder usar el dashboard.
+No cambiar estas columnas con SQL masivo, **query()->update()**,
+**saveQuietly()** o eventos deshabilitados. Esas vías omiten rotación y
+auditoría; una reversión ABA también fuera de Eloquent puede conservar una
+generación antigua.
 
-Cada controlador de autenticación y de verificación redirige según el tipo de
-cuenta mediante `User::homeRoute()` (devuelve `vendor.dashboard` para vendors y
-`dashboard` para clientes). Esto aplica a login, registro, prompt de
-verificación, enlace de verificación (`VerifyEmailController`), reenvío de
-correo y confirmación de contraseña. Así, un vendor nunca aterriza en el
-dashboard de cliente tras activar su correo o iniciar sesión.
+## Autoaprobación de productos
 
-## Flujo del vendor
+**auto_approve_products** es un grant separado. Requiere
+**Store Auto-Approval Management** y razón de 10 a 1000 caracteres.
 
-Cuando el vendor crea o actualiza su perfil
-(`StoreController@update` en `app/Http/Controllers/Frontend/StoreController.php`),
-después de guardar se invoca `StoreModerationService::submitForReview`. Esto:
+Al habilitarlo se bloquean Store, seller y KYC, se exige elegibilidad completa,
+se incrementa el epoch de Store, se fijan los cuatro pins, se crea
+**store_auto_approval_audits** y se reevalúan Products pending. Si se solicita
+mantener enabled sobre un grant que ya es inelegible, primero se revoca y
+audita fail-closed y luego se responde con error.
 
-1. Pone la tienda en `pending`.
-2. Si la tienda estaba `approved`, invalida sus productos aprobados.
-3. Muestra un aviso indicando que la tienda quedó en revisión.
+El cambio de epoch vuelve stale los pins de Products ya decididos. Su estado
+puede seguir approved, pero no se publican hasta una decisión con el contexto
+nuevo.
 
-El vendor no puede cambiar `status`, `approved_at` ni `suspended_at` desde el
-formulario; esos campos no forman parte de `$validated`.
+## Soft delete y restore
 
-## Panel admin
+Antes del soft delete, **StoreSoftDeleteModerationObserver**:
 
-**Permiso:** `Store Management` (protected via middleware `permission:Store Management`).
+- mueve la Store a pending;
+- incrementa versiones de moderación y elegibilidad;
+- fuerza **is_active=false**;
+- revoca trust y decisión administrativa;
+- mueve Products approved/pending a pending y limpia decisión y riesgo.
 
-Rutas en `routes/admin.php`:
+Antes del restore vuelve a dejar la Store pending, sin trust y con versión
+nueva. Después intenta crear un nuevo envío. Si esa remoderación falla, reporta
+la excepción, pero la Store permanece inactiva y sin revisión vigente.
 
-```text
-GET    /admin/stores                 admin.stores.index      (listado + filtro por estado)
-GET    /admin/stores/{store}         admin.stores.show       (detalle + acciones)
-POST   /admin/stores/{store}/approve admin.stores.approve
-POST   /admin/stores/{store}/reject  admin.stores.reject     (motivo obligatorio)
-POST   /admin/stores/{store}/suspend admin.stores.suspend    (motivo obligatorio)
-POST   /admin/stores/{store}/restore admin.stores.restore
-```
+El observer no actúa en force delete. Un borrado físico necesita un
+procedimiento explícito de retención para auditorías, Products y archivos.
+Product tiene una barrera análoga: soft delete/restore limpia decisión, pins y
+riesgo, incrementa versión y exige remoderación.
 
-Vistas:
-- `resources/views/admin/store/index.blade.php`
-- `resources/views/admin/store/show.blade.php`
+## Defensa XSS
 
-El sidebar muestra **Stores** si el admin tiene `Store Management`
-(`resources/views/admin/layouts/sidebar.blade.php`).
+**short_description** y **long_description** se sanitizan en dos capas: el
+controlador antes de validar y el servicio antes de persistir.
+**ProductContentSanitizer** conserva una allowlist pequeña de formato, elimina
+script, iframe, SVG, formularios, estilos y multimedia, retira atributos no
+permitidos y limita enlaces a HTTP, HTTPS, mailto, tel, rutas locales o
+fragmentos. Un target blank recibe **noopener noreferrer**.
 
-## Notas de operación
+El detalle admin vuelve a sanitizar antes de renderizar HTML. Sólo
+**safeShortDescriptionHtml** y **safeLongDescriptionHtml** deben imprimirse sin
+escape; el resto usa escape normal de Blade. Los enlaces sociales se validan
+como URL y el formulario vendor no acepta campos administrativos.
 
-- Ejecutar el seeder de permisos tras añadir el permiso:
-  ```bash
-  php artisan db:seed --class=Database\\Seeders\\Admin\\PermissionSeeder
-  php artisan permission:cache-reset
-  ```
-- Ejecutar la migración que añade los campos de aprobación (`approved_by`,
-  `rejected_at`, `rejection_reason`) a `stores`:
-  ```bash
-  php artisan migrate
-  ```
-- Aprobar una tienda con seller no elegible devuelve 422; el endpoint admin
-  captura la excepción y redirige con un mensaje.
+## Administración y auditoría
 
-## Versioned store moderation
+Las rutas bajo **/admin/stores** requieren **Store Management**. Las acciones
+approve, reject, suspend y restore reciben la versión actual; reject y suspend
+requieren motivo.
 
-Stores now use the same versioned-review pattern as Products:
+Las decisiones quedan en **store_approval_reviews**, los cambios de trust en
+**store_auto_approval_audits** y los cambios de elegibilidad en
+**seller_eligibility_events**.
 
-- `stores.moderation_version`, `reviewed_version`, `submitted_at`, `moderation_fingerprint`, and `moderation_reason`.
-- `store_approval_reviews` is an append-only audit history.
-- Admin decisions require the current `moderation_version`; stale decisions receive 409.
-- Material Store profile changes create a new pending version. A no-op save does not invalidate an approved Store.
-- Store status changes no longer invalidate Product content approvals. Publication is blocked by the Store being pending/rejected/suspended or its moderation version being stale.
-
-## Implemented versioned Store moderation
-
-The refactor is recorded in detail in:
-
-```text
-docs/refactor-implementation.md
-```
-
-In the current implementation:
-
-- Store decisions are versioned and audited through `store_approval_reviews`.
-- Admin forms send `moderation_version`; stale decisions return `409`.
-- Material Store updates create a new pending version.
-- A no-op save does not invalidate an approved Store.
-- Store status changes no longer invalidate Product content approvals. Instead,
-  `Product::published()` closes publication while the Store is not current or
-  approved.
-
+Para despliegue, reconciliación, monitoreo y troubleshooting consultar
+[operations.md](product-moderation/operations.md).

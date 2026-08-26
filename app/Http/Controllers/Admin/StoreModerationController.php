@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Admin;
 use App\Models\Store;
 use App\Services\AlertService;
+use App\Services\ProductContentSanitizer;
 use App\Services\StoreModerationService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
@@ -42,11 +43,17 @@ class StoreModerationController extends Controller implements HasMiddleware
         return view('admin.store.index', compact('stores'));
     }
 
-    public function show(Store $store): View
+    public function show(Store $store, ProductContentSanitizer $contentSanitizer): View
     {
         $store->load(['seller.kyc', 'approver', 'products', 'approvalReviews']);
+        $safeShortDescriptionHtml = $contentSanitizer->sanitize($store->short_description);
+        $safeLongDescriptionHtml = $contentSanitizer->sanitize($store->long_description);
 
-        return view('admin.store.show', compact('store'));
+        return view('admin.store.show', compact(
+            'store',
+            'safeShortDescriptionHtml',
+            'safeLongDescriptionHtml',
+        ));
     }
 
     public function approve(Request $request, Store $store, StoreModerationService $moderation)

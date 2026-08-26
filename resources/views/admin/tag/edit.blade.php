@@ -49,7 +49,7 @@
                             <div class="mb-3">
                                 <label for="status" class="form-check form-switch form-switch-3">
                                     <input type="checkbox" @checked($tag->is_active) class="form-check-input"
-                                        name="status" id="status">
+                                        name="status" id="status" value="1">
                                     <span class="form-check-label">Active</span>
                                 </label>
                                 <small class="form-hint">

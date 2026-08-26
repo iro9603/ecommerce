@@ -2,7 +2,8 @@
 
 use App\Http\Controllers\Frontend\HomeController;
 use App\Http\Controllers\Frontend\KycController;
-use App\Http\Controllers\Frontend\ProductCatalogController;
+use App\Http\Controllers\Frontend\ProductPageController;
+use App\Http\Controllers\Frontend\ProductMediaController;
 use App\Http\Controllers\Frontend\ProfileController;
 use App\Http\Controllers\Frontend\StoreController;
 use App\Http\Controllers\Frontend\UserDashboardController;
@@ -12,10 +13,16 @@ use App\Http\Controllers\Frontend\VendorProductController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', [HomeController::class, 'index'])->name('home');
-Route::get('/products', [ProductCatalogController::class, 'index'])->name('products.index');
-Route::get('/products/{slug}', [ProductCatalogController::class, 'show'])
+
+
+/**  Product routes */
+Route::get('/products', [ProductPageController::class, 'index'])->name('products.index');
+Route::get('/products/{slug}', [ProductPageController::class, 'show'])
     ->where('slug', '[A-Za-z0-9-]+')
     ->name('products.show');
+Route::get('/product-media/{image}', ProductMediaController::class)
+    ->whereNumber('image')
+    ->name('product-media.show');
 
 Route::group(['middleware' => ['auth', 'verified']], function () {
 
@@ -68,6 +75,7 @@ Route::group(['prefix' => 'vendor', 'as' => 'vendor.', 'middleware' => ['auth', 
         ->middleware('throttle:300,1')
         ->name('digital-products.file.upload');
     Route::delete('/products/digital/{product}/{file}', [VendorDigitalProductFileController::class, 'destroy'])
+        ->scopeBindings()
         ->name('digital-products.file.destroy');
     Route::delete('/products/{product}', [VendorProductController::class, 'destroy'])->name('products.destroy');
 });

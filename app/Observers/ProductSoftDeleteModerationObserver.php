@@ -3,9 +3,14 @@
 namespace App\Observers;
 
 use App\Models\Product;
+use App\Services\ProductModerationService;
 
 class ProductSoftDeleteModerationObserver
 {
+    public function __construct(
+        private readonly ProductModerationService $moderation,
+    ) {}
+
     public function deleting(Product $product): void
     {
         if ($product->isForceDeleting()) {
@@ -14,6 +19,7 @@ class ProductSoftDeleteModerationObserver
 
         $product->forceFill([
             'approved_status' => Product::APPROVAL_PENDING,
+            'moderation_version' => ((int) $product->moderation_version) + 1,
             'reviewed_version' => null,
             'approved_at' => null,
             'approved_by' => null,
@@ -21,10 +27,16 @@ class ProductSoftDeleteModerationObserver
             'moderation_fingerprint' => null,
             'risk_level' => null,
             'risk_score' => null,
-        ]);
+            'reviewed_user_eligibility_epoch' => null,
+            'reviewed_kyc_id' => null,
+            'reviewed_kyc_eligibility_epoch' => null,
+            'reviewed_store_eligibility_epoch' => null,
+            'reviewed_context_hash' => null,
+            'reviewed_policy_version' => null,
+        ])->saveQuietly();
     }
 
-    public function restored(Product $product): void
+    public function restoring(Product $product): void
     {
         $product->forceFill([
             'approved_status' => Product::APPROVAL_PENDING,
@@ -35,6 +47,26 @@ class ProductSoftDeleteModerationObserver
             'moderation_fingerprint' => null,
             'risk_level' => null,
             'risk_score' => null,
-        ])->saveQuietly();
+            'moderation_version' => ((int) $product->moderation_version) + 1,
+            'reviewed_user_eligibility_epoch' => null,
+            'reviewed_kyc_id' => null,
+            'reviewed_kyc_eligibility_epoch' => null,
+            'reviewed_store_eligibility_epoch' => null,
+            'reviewed_context_hash' => null,
+            'reviewed_policy_version' => null,
+        ]);
+    }
+
+    public function restored(Product $product): void
+    {
+        try {
+            $this->moderation->forceRevalidate(
+                $product,
+                null,
+                'Product was restored and requires a new moderation decision.',
+            );
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
     }
 }

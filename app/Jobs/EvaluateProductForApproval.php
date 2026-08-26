@@ -17,14 +17,28 @@ class EvaluateProductForApproval implements ShouldBeUnique, ShouldQueue
 
     public int $uniqueFor = 3600;
 
+    public ?string $expectedContentFingerprint = null;
+
+    public ?string $expectedContextHash = null;
+
     public function __construct(
         public readonly int $productId,
-        public readonly int $moderationVersion
-    ) {}
+        public readonly int $moderationVersion,
+        ?string $expectedContentFingerprint = null,
+        ?string $expectedContextHash = null,
+    ) {
+        $this->expectedContentFingerprint = $expectedContentFingerprint;
+        $this->expectedContextHash = $expectedContextHash;
+    }
 
     public function uniqueId(): string
     {
-        return $this->productId.':'.$this->moderationVersion;
+        return implode(':', [
+            $this->productId,
+            $this->moderationVersion,
+            $this->expectedContentFingerprint ?? 'missing-content',
+            $this->expectedContextHash ?? 'missing-context',
+        ]);
     }
 
     /**
@@ -37,6 +51,11 @@ class EvaluateProductForApproval implements ShouldBeUnique, ShouldQueue
 
     public function handle(ProductModerationService $moderation): void
     {
-        $moderation->evaluatePending($this->productId, $this->moderationVersion);
+        $moderation->evaluatePending(
+            $this->productId,
+            $this->moderationVersion,
+            $this->expectedContentFingerprint,
+            $this->expectedContextHash,
+        );
     }
 }

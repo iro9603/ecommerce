@@ -9,14 +9,15 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class TagController extends Controller implements HasMiddleware
 {
-
-    static function Middleware(): array
+    public static function Middleware(): array
     {
         return [
-            new Middleware('permission:Tags Management')
+            new Middleware('permission:Tags Management'),
 
         ];
     }
@@ -27,6 +28,7 @@ class TagController extends Controller implements HasMiddleware
     public function index(): View
     {
         $tags = Tag::paginate(20);
+
         return view('admin.tag.index', compact('tags'));
     }
 
@@ -43,15 +45,18 @@ class TagController extends Controller implements HasMiddleware
      */
     public function store(Request $request)
     {
-        $request->validate([
-            'name' => ['required', 'string', 'max:255', 'unique:tags,name']
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255', 'unique:tags,name'],
+            'status' => ['sometimes', 'boolean'],
         ]);
 
-        $tag = new Tag();
-        $tag->name = $request->name;
-        $tag->slug = \Str::slug($request->name);
-        $tag->is_active = $request->has('status') ? 1 : 0;
-        $tag->save();
+        DB::transaction(function () use ($request, $validated): void {
+            $tag = new Tag;
+            $tag->name = $validated['name'];
+            $tag->slug = Str::slug($validated['name']);
+            $tag->is_active = $request->boolean('status');
+            $tag->save();
+        }, 3);
 
         AlertService::created();
 
@@ -80,14 +85,21 @@ class TagController extends Controller implements HasMiddleware
     public function update(Request $request, Tag $tag)
     {
 
-        $request->validate([
-            'name' => ['required', 'string', 'max:255', 'unique:tags,name,' . $tag->id],
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255', 'unique:tags,name,'.$tag->id],
+            'status' => ['sometimes', 'boolean'],
         ]);
 
-        $tag->name = $request->name;
-        $tag->slug = \Str::slug($request->name);
-        $tag->is_active = $request->has('status') ? 1 : 0;
-        $tag->save();
+        DB::transaction(function () use ($tag, $request, $validated): void {
+            $current = Tag::query()
+                ->whereKey($tag->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+            $current->name = $validated['name'];
+            $current->slug = Str::slug($validated['name']);
+            $current->is_active = $request->boolean('status');
+            $current->save();
+        }, 3);
 
         AlertService::updated();
 
@@ -99,8 +111,11 @@ class TagController extends Controller implements HasMiddleware
      */
     public function destroy(Tag $tag)
     {
-        $tag->delete();
+        DB::transaction(function () use ($tag): void {
+            Tag::query()->whereKey($tag->getKey())->lockForUpdate()->firstOrFail()->delete();
+        }, 3);
         AlertService::deleted();
+
         return response()->json(['status' => 'success', 'message' => 'Tag deleted successfully.']);
     }
 }

@@ -24,7 +24,7 @@ test('chunk cleanup refuses to delete a directory outside its exact root', funct
             DigitalProductFileUploadService::class,
             'deleteIsolatedChunkDirectory'
         );
-        $service = new DigitalProductFileUploadService;
+        $service = app(DigitalProductFileUploadService::class);
 
         expect(fn () => $method->invoke($service, $chunkRoot, $outside))
             ->toThrow(RuntimeException::class, 'Refusing to delete an unsafe chunk directory.')
@@ -47,7 +47,7 @@ test('a traversal filename is rejected before creating a chunk directory', funct
     File::put($outsideSentinel, 'keep');
 
     try {
-        expect(fn () => (new DigitalProductFileUploadService)->storeChunk(
+        expect(fn () => app(DigitalProductFileUploadService::class)->storeChunk(
             $product,
             UploadedFile::fake()->createWithContent('chunk.part', 'first half'),
             [

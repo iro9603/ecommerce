@@ -4,7 +4,7 @@
             <a href="{{ route('products.show', $product->slug) }}">
                 <img
                     class="default-img"
-                    src="{{ asset($product->primaryImage?->path ?? 'assets/frontend/dist/imgs/shop/product-1-1.jpg') }}"
+                    src="{{ $product->primaryImage?->controlledUrl() ?? asset('assets/frontend/dist/imgs/shop/product-1-1.jpg') }}"
                     alt="{{ $product->name }}"
                     loading="lazy"
                 >

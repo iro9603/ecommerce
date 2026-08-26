@@ -2,8 +2,11 @@
 
 namespace App\Services;
 
+use App\Models\Store;
 use App\Models\Product;
 use App\Models\ProductFile;
+use App\Models\User;
+use Closure;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
@@ -14,6 +17,13 @@ use RuntimeException;
 
 class DigitalProductFileUploadService
 {
+    public function __construct(private readonly ProductModerationService $moderation) {}
+
+    public function disk(): string
+    {
+        return $this->uploadDisk();
+    }
+
     /** @var array<string, string> */
     private const ALLOWED_MIME_TYPES = [
         'image/jpeg' => 'jpg',
@@ -53,8 +63,17 @@ class DigitalProductFileUploadService
      * @param  array{uuid:string,index:int,total_chunks:int,total_size:int,original_name:string}  $metadata
      * @return array{complete:bool,product_file?:ProductFile,chunk?:int}
      */
-    public function storeChunk(Product $product, UploadedFile $chunk, array $metadata, string $uploaderKey): array
+    public function storeChunk(
+        Product $product,
+        UploadedFile $chunk,
+        array $metadata,
+        string $uploaderKey,
+        ?Closure $authorizeLockedProduct = null,
+        ?User $submittedBy = null,
+        string $moderationReason = 'Digital product file changed.',
+    ): array
     {
+        $this->uploadDisk();
         $this->assertMetadata($metadata);
         $this->assertPersistentQuota($product, $metadata['total_size']);
 
@@ -108,18 +127,40 @@ class DigitalProductFileUploadService
                 fclose($stream);
             }
 
-            try {
-                $productFile = new ProductFile;
-                $productFile->product_id = $product->getKey();
-                $productFile->filename = $this->safeOriginalName($metadata['original_name']);
-                $productFile->path = $relativePath;
-                $productFile->extension = $extension;
-                $productFile->size = filesize($assembledPath);
-                $productFile->sha256 = $sha256;
-                $productFile->save();
+            $size = filesize($assembledPath);
+
+            if ($size === false) {
+                Storage::disk($this->uploadDisk())->delete($relativePath);
+                throw new RuntimeException('Unable to determine the assembled upload size.');
+            }
+
+           try {
+                if ($authorizeLockedProduct === null) {
+                    throw new RuntimeException('Locked product authorization is required to finalize an upload.');
+                }
+
+               $productFile = $this->persistFileAndModeration(
+                    $product,
+                    [
+                        'filename' => $this->safeOriginalName($metadata['original_name']),
+                        'path' => $relativePath,
+                        'extension' => $extension,
+                        'size' => $size,
+                        'sha256' => $sha256,
+                    ],
+                    $authorizeLockedProduct,
+                    $submittedBy,
+                    $moderationReason,
+                );
             } catch (\Throwable $exception) {
                 Storage::disk($this->uploadDisk())->delete($relativePath);
                 throw $exception;
+            }
+
+            if (DB::connection()->transactionLevel() > 0) {
+                DB::connection()->afterRollBack(
+                    fn () => Storage::disk($this->uploadDisk())->delete($relativePath),
+                );
             }
 
             return ['complete' => true, 'product_file' => $productFile];
@@ -128,6 +169,71 @@ class DigitalProductFileUploadService
             fclose($lock);
             $this->deleteIsolatedChunkDirectory($chunkRoot, $chunkFolder);
         }
+    }
+
+    /**
+     * @param array{filename:string,path:string,extension:string,size:int,sha256:string} $metadata
+     */
+    private function persistFileAndModeration(
+        Product $product,
+        array $metadata,
+        Closure $authorizeLockedProduct,
+        ?User $submittedBy,
+        string $moderationReason,
+    ): ProductFile {
+        $storeId = Product::query()->whereKey($product->getKey())->value('store_id');
+        abort_if($storeId === null, 409, 'The product store association changed.');
+
+        return DB::transaction(function () use (
+            $product,
+            $metadata,
+            $authorizeLockedProduct,
+            $submittedBy,
+            $moderationReason,
+            $storeId,
+        ): ProductFile {
+            $store = Store::withTrashed()
+                ->whereKey((int) $storeId)
+                ->lockForUpdate()
+                ->firstOrFail();
+            abort_if($store->trashed(), 409, 'Files cannot be added to a deleted store.');
+
+            $current = Product::query()
+                ->whereKey($product->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+            abort_unless(
+                (int) $current->store_id === (int) $storeId,
+                409,
+                'The product store association changed.',
+            );
+            abort_unless($current->product_type === 'digital', 404);
+            $authorizeLockedProduct($current);
+
+            ProductFile::query()
+                ->where('product_id', $current->getKey())
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get(['id']);
+            $this->assertPersistentQuota($current, $metadata['size']);
+
+            $productFile = ProductFile::query()->create([
+                'product_id' => $current->getKey(),
+                'filename' => $metadata['filename'],
+                'path' => $metadata['path'],
+                'extension' => $metadata['extension'],
+                'size' => $metadata['size'],
+                'sha256' => $metadata['sha256'],
+            ]);
+
+            $this->moderation->markForReview(
+                $current,
+                $submittedBy,
+                $moderationReason,
+            );
+
+            return $productFile;
+        }, 5);
     }
 
     /** @param array{uuid:string,index:int,total_chunks:int,total_size:int,original_name:string} $metadata */
@@ -386,7 +492,42 @@ class DigitalProductFileUploadService
 
     private function uploadDisk(): string
     {
-        return (string) config('products.digital_upload.disk', 'local');
+        $disk = (string) config('products.digital_upload.disk', 'private');
+        $allowed = (array) config('products.digital_upload.allowed_disks', ['private']);
+        $configuration = config('filesystems.disks.'.$disk);
+
+        if (! in_array($disk, $allowed, true) || ! is_array($configuration)) {
+            throw new RuntimeException('The digital product upload disk is not allowlisted.');
+        }
+
+        if (
+            ($configuration['visibility'] ?? 'private') === 'public'
+            || (bool) ($configuration['serve'] ?? false)
+            || ($configuration['throw'] ?? false) !== true
+        ) {
+            throw new RuntimeException('The digital product upload disk must be private and fail-fast.');
+        }
+
+        $driver = $configuration['driver'] ?? null;
+        if (! in_array($driver, ['local', 's3'], true)) {
+            throw new RuntimeException('The digital product upload disk driver is not supported.');
+        }
+
+        if ($driver === 'local') {
+            $root = str_replace('\\', '/', rtrim((string) ($configuration['root'] ?? ''), '/\\'));
+            $publicRoots = [
+                str_replace('\\', '/', rtrim(public_path(), '/\\')),
+                str_replace('\\', '/', rtrim(storage_path('app/public'), '/\\')),
+            ];
+
+            foreach ($publicRoots as $publicRoot) {
+                if ($root === $publicRoot || str_starts_with($root, $publicRoot.'/')) {
+                    throw new RuntimeException('The digital product upload disk root is publicly reachable.');
+                }
+            }
+        }
+
+        return $disk;
     }
 
     private function safeOriginalName(string $name): string

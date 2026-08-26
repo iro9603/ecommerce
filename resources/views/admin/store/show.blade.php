@@ -145,7 +145,7 @@
                                 <div class="col-12">
                                     <label class="form-label text-muted">Short description</label>
                                     <div class="border rounded p-3 bg-secondary-subtle">
-                                        {!! $store->short_description !!}
+                                        {!! $safeShortDescriptionHtml !!}
                                     </div>
                                 </div>
                             @endif
@@ -154,7 +154,7 @@
                                 <div class="col-12">
                                     <label class="form-label text-muted">Long description</label>
                                     <div class="border rounded p-3 bg-secondary-subtle">
-                                        {!! $store->long_description !!}
+                                        {!! $safeLongDescriptionHtml !!}
                                     </div>
                                 </div>
                             @endif

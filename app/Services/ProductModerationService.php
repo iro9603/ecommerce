@@ -7,6 +7,7 @@ use App\Jobs\EvaluateProductApprovalContext;
 use App\Models\Admin;
 use App\Models\Product;
 use App\Models\ProductApprovalReview;
+use App\Models\ProductModerationEvent;
 use App\Models\Store;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -14,7 +15,14 @@ use LogicException;
 
 class ProductModerationService
 {
-    public function __construct(private readonly ProductRiskEvaluator $riskEvaluator) {}
+    private readonly ProductModerationEventRecorder $eventRecorder;
+
+    public function __construct(
+        private readonly ProductRiskEvaluator $riskEvaluator,
+        ?ProductModerationEventRecorder $eventRecorder = null,
+    ) {
+        $this->eventRecorder = $eventRecorder ?? new ProductModerationEventRecorder;
+    }
 
     public function submit(
         Product $product,
@@ -91,14 +99,28 @@ class ProductModerationService
                 return [$review, (int) $current->moderation_version];
             }
 
-            ProductApprovalReview::query()
+            $supersededReviews = ProductApprovalReview::query()
                 ->where('product_id', $current->getKey())
                 ->where('status', ProductApprovalReview::STATUS_PENDING)
-                ->update([
+                ->lockForUpdate()
+                ->get();
+
+            foreach ($supersededReviews as $supersededReview) {
+                $supersededReview->forceFill([
                     'status' => ProductApprovalReview::STATUS_SUPERSEDED,
                     'decision_reason' => 'Superseded by a newer product submission.',
                     'reviewed_at' => now(),
-                ]);
+                ])->save();
+
+                $this->eventRecorder->record(
+                    $supersededReview,
+                    ProductModerationEvent::TYPE_SUPERSEDED,
+                    $submittedBy,
+                    (string) $supersededReview->decision_reason,
+                    metadata: ['superseded_by_version' => ((int) $current->moderation_version) + 1],
+                    idempotencyKey: 'product-review:'.$supersededReview->getKey().':superseded',
+                );
+            }
 
             $version = ((int) $current->moderation_version) + 1;
             $submittedAt = now();
@@ -114,6 +136,12 @@ class ProductModerationService
                 'risk_level' => null,
                 'risk_score' => null,
                 'moderation_fingerprint' => $fingerprint,
+                'reviewed_user_eligibility_epoch' => null,
+                'reviewed_kyc_id' => null,
+                'reviewed_kyc_eligibility_epoch' => null,
+                'reviewed_store_eligibility_epoch' => null,
+                'reviewed_context_hash' => null,
+                'reviewed_policy_version' => null,
             ])->save();
 
             $review = ProductApprovalReview::query()->create([
@@ -130,10 +158,24 @@ class ProductModerationService
                 'submitted_at' => $submittedAt,
             ]);
 
+            $this->eventRecorder->record(
+                $review,
+                ProductModerationEvent::TYPE_SUBMITTED,
+                $submittedBy,
+                $review->submission_reason,
+                metadata: ['forced_revalidation' => $forceNewVersion],
+                idempotencyKey: 'product-review:'.$review->getKey().':submitted',
+            );
+
             return [$review, $version];
         });
 
-        EvaluateProductForApproval::dispatch((int) $product->getKey(), $version)->afterCommit();
+        EvaluateProductForApproval::dispatch(
+            (int) $product->getKey(),
+            $version,
+            (string) $review->content_hash,
+            (string) $review->context_hash,
+        )->afterCommit();
         $product->refresh();
 
         return $review;
@@ -206,14 +248,27 @@ class ProductModerationService
                     $context = $this->evaluationContext($current);
                     $contextHash = $this->fingerprint($context);
 
+                    $previousContextHash = (string) $review->context_hash;
+
                     $review->forceFill([
                         'evaluation_context' => $context,
                         'context_hash' => $contextHash,
                     ])->save();
 
+                    if (! hash_equals($previousContextHash, $contextHash)) {
+                        $this->eventRecorder->record(
+                            $review,
+                            ProductModerationEvent::TYPE_CONTEXT_REEVALUATED,
+                            reason: $reason,
+                            metadata: ['previous_context_hash' => $previousContextHash],
+                            idempotencyKey: 'product-review:'.$review->getKey().':context:'.$contextHash,
+                        );
+                    }
+
                     return [
                         (int) $current->getKey(),
                         (int) $current->moderation_version,
+                        (string) $review->content_hash,
                         $contextHash,
                     ];
                 });
@@ -223,6 +278,7 @@ class ProductModerationService
                         $dispatch[0],
                         $dispatch[1],
                         $dispatch[2],
+                        $dispatch[3],
                     )->afterCommit();
                     $count++;
                 }
@@ -231,149 +287,253 @@ class ProductModerationService
         return $count;
     }
 
-    public function evaluatePending(int $productId, int $expectedVersion, ?string $contextHash = null): bool
-    {
-        $product = Product::query()
-            ->with(['store.seller.kyc', 'files'])
-            ->find($productId);
-
+    public function evaluatePending(
+        int $productId,
+        int $expectedVersion,
+        ?string $expectedContentFingerprint = null,
+        ?string $expectedContextHash = null,
+    ): bool {
         if (
-            ! $product
-            || $product->approved_status !== Product::APPROVAL_PENDING
-            || (int) $product->moderation_version !== $expectedVersion
+            ! $this->validFingerprint($expectedContentFingerprint)
+            || ! $this->validFingerprint($expectedContextHash)
         ) {
             return false;
         }
 
-        $submittedReview = ProductApprovalReview::query()
+        $coordinates = DB::table('products')
+            ->leftJoin('stores', 'stores.id', '=', 'products.store_id')
+            ->where('products.id', $productId)
+            ->first(['products.store_id', 'stores.seller_id']);
+
+        if ($coordinates === null || $coordinates->seller_id === null) {
+            return false;
+        }
+
+        return DB::transaction(
+            fn (): bool => $this->evaluatePendingLocked(
+                $productId,
+                $expectedVersion,
+                $expectedContentFingerprint,
+                $expectedContextHash,
+                (int) $coordinates->store_id,
+                (int) $coordinates->seller_id,
+            ),
+            3,
+        );
+    }
+
+    private function evaluatePendingLocked(
+        int $productId,
+        int $expectedVersion,
+        string $expectedContentFingerprint,
+        string $expectedContextHash,
+        int $storeId,
+        int $sellerId,
+    ): bool {
+        $seller = DB::table('users')
+            ->where('id', $sellerId)
+            ->lockForUpdate()
+            ->first(['id']);
+
+        if ($seller === null) {
+            return false;
+        }
+
+        $store = Store::query()->whereKey($storeId)->lockForUpdate()->first();
+
+        if ($store === null || (int) $store->seller_id !== $sellerId) {
+            return false;
+        }
+
+        DB::table('kycs')->where('user_id', $sellerId)->lockForUpdate()->get(['id']);
+
+        $current = Product::query()->whereKey($productId)->lockForUpdate()->first();
+
+        if ($current === null || (int) $current->store_id !== $storeId) {
+            return false;
+        }
+
+        $review = ProductApprovalReview::query()
             ->where('product_id', $productId)
             ->where('version', $expectedVersion)
-            ->where('status', ProductApprovalReview::STATUS_PENDING)
+            ->lockForUpdate()
             ->first();
+        $state = $this->pendingEvaluationState(
+            $current,
+            $review,
+            $expectedVersion,
+            $expectedContentFingerprint,
+            $expectedContextHash,
+        );
 
-        if (! $submittedReview) {
+        if ($state === null) {
             return false;
+        }
+
+        $assessment = $this->riskEvaluator->evaluate($current);
+        $current->refresh();
+        $store->refresh();
+        $review->refresh();
+
+        if (
+            (int) $current->store_id !== $storeId
+            || (int) $store->seller_id !== $sellerId
+        ) {
+            return false;
+        }
+
+        $state = $this->pendingEvaluationState(
+            $current,
+            $review,
+            $expectedVersion,
+            $expectedContentFingerprint,
+            $expectedContextHash,
+        );
+
+        if ($state === null) {
+            return false;
+        }
+
+        $review->forceFill([
+            'risk_score' => $assessment['score'],
+            'risk_level' => $assessment['level'],
+            'risk_reasons' => $assessment['reasons'],
+            'evaluation_context' => $state['context'],
+            'context_hash' => $state['context_hash'],
+        ]);
+
+        if ($assessment['auto_approvable']) {
+            $this->automaticallyApprove(
+                $current,
+                $review,
+                $expectedVersion,
+                $assessment,
+                $state['context'],
+            );
+        } else {
+            $this->keepPendingAfterAssessment($current, $review, $assessment);
+        }
+
+        $review->save();
+
+        $eventType = $assessment['auto_approvable']
+            ? ProductModerationEvent::TYPE_AUTOMATIC_APPROVED
+            : ProductModerationEvent::TYPE_AUTOMATIC_DECLINED;
+        $riskResult = $this->riskResult($assessment);
+
+        $this->eventRecorder->record(
+            $review,
+            $eventType,
+            reason: $review->decision_reason,
+            riskResult: $riskResult,
+            metadata: [
+                'expected_content_hash' => $expectedContentFingerprint,
+                'expected_context_hash' => $expectedContextHash,
+            ],
+            idempotencyKey: implode(':', [
+                'product-review',
+                $review->getKey(),
+                $eventType,
+                $expectedContentFingerprint,
+                $expectedContextHash,
+                $this->fingerprint($riskResult),
+            ]),
+        );
+
+        return true;
+    }
+
+    /**
+     * @return array{content_hash: string, context: array<string, mixed>, context_hash: string}|null
+     */
+    private function pendingEvaluationState(
+        Product $product,
+        ?ProductApprovalReview $review,
+        int $expectedVersion,
+        string $expectedContentFingerprint,
+        string $expectedContextHash,
+    ): ?array {
+        if (
+            $product->approved_status !== Product::APPROVAL_PENDING
+            || (int) $product->moderation_version !== $expectedVersion
+            || ! hash_equals(
+                $expectedContentFingerprint,
+                (string) $product->moderation_fingerprint,
+            )
+            || $review === null
+            || $review->status !== ProductApprovalReview::STATUS_PENDING
+            || ! hash_equals($expectedContentFingerprint, (string) $review->content_hash)
+            || ! hash_equals($expectedContextHash, (string) $review->context_hash)
+        ) {
+            return null;
         }
 
         $contentHash = $this->fingerprint($this->contentSnapshot($product));
         $context = $this->evaluationContext($product);
         $contextHash = $this->fingerprint($context);
 
-        if (! hash_equals((string) $submittedReview->content_hash, $contentHash)) {
-            return false;
-        }
-
         if (
-            $submittedReview->context_hash !== null
-            && ! hash_equals((string) $submittedReview->context_hash, $contextHash)
+            ! hash_equals($expectedContentFingerprint, $contentHash)
+            || ! hash_equals($expectedContextHash, $contextHash)
         ) {
-            return false;
+            return null;
         }
 
-        if (
-            $contextHash !== null
-            && (
-                $submittedReview->context_hash === null
-                || ! hash_equals((string) $submittedReview->context_hash, $contextHash)
-            )
-        ) {
-            return false;
-        }
+        return [
+            'content_hash' => $contentHash,
+            'context' => $context,
+            'context_hash' => $contextHash,
+        ];
+    }
 
-        $assessment = $this->riskEvaluator->evaluate($product);
+    private function validFingerprint(?string $fingerprint): bool
+    {
+        return $fingerprint !== null
+            && preg_match('/\A[0-9a-f]{64}\z/D', $fingerprint) === 1;
+    }
 
-        return DB::transaction(function () use (
-            $productId,
-            $expectedVersion,
-            $assessment,
-            $context,
-            $contextHash,
-            $contentHash
-        ): bool {
-            $current = Product::query()->whereKey($productId)->lockForUpdate()->first();
+    private function automaticallyApprove(
+        Product $product,
+        ProductApprovalReview $review,
+        int $expectedVersion,
+        array $assessment,
+        array $context,
+    ): void {
+        $decisionReason = 'Automatically approved after passing the product risk evaluation.';
 
-            if (
-                ! $current
-                || $current->approved_status !== Product::APPROVAL_PENDING
-                || (int) $current->moderation_version !== $expectedVersion
-            ) {
-                return false;
-            }
+        $product->forceFill([
+            'approved_status' => Product::APPROVAL_APPROVED,
+            'reviewed_version' => $expectedVersion,
+            'approved_at' => now(),
+            'approved_by' => null,
+            'moderation_reason' => $decisionReason,
+            'risk_score' => $assessment['score'],
+            'risk_level' => $assessment['level'],
+            ...$this->decisionEligibilityPins($context),
+        ])->save();
 
-            $review = ProductApprovalReview::query()
-                ->where('product_id', $productId)
-                ->where('version', $expectedVersion)
-                ->lockForUpdate()
-                ->first();
+        $review->forceFill([
+            'status' => ProductApprovalReview::STATUS_APPROVED,
+            'source' => ProductApprovalReview::SOURCE_AUTOMATIC,
+            'decision_reason' => $decisionReason,
+            'reviewed_at' => now(),
+        ]);
+    }
 
-            if (! $review || $review->status !== ProductApprovalReview::STATUS_PENDING) {
-                return false;
-            }
+    private function keepPendingAfterAssessment(
+        Product $product,
+        ProductApprovalReview $review,
+        array $assessment,
+    ): void {
+        $decisionReason = $this->manualReviewReason($assessment['reasons']);
 
-            if (! hash_equals((string) $review->content_hash, $contentHash)) {
-                return false;
-            }
+        $product->forceFill([
+            'moderation_reason' => $decisionReason,
+            'risk_score' => $assessment['score'],
+            'risk_level' => $assessment['level'],
+        ])->save();
 
-            if (
-                $review->context_hash !== null
-                && ! hash_equals((string) $review->context_hash, $contextHash)
-            ) {
-                return false;
-            }
-
-            if (
-                $contextHash !== null
-                && (
-                    $review->context_hash === null
-                    || ! hash_equals((string) $review->context_hash, $contextHash)
-                )
-            ) {
-                return false;
-            }
-
-            $review->forceFill([
-                'risk_score' => $assessment['score'],
-                'risk_level' => $assessment['level'],
-                'risk_reasons' => $assessment['reasons'],
-                'evaluation_context' => $context,
-                'context_hash' => $contextHash,
-            ]);
-
-            if ($assessment['auto_approvable']) {
-                $decisionReason = 'Automatically approved after passing the product risk evaluation.';
-
-                $current->forceFill([
-                    'approved_status' => Product::APPROVAL_APPROVED,
-                    'reviewed_version' => $expectedVersion,
-                    'approved_at' => now(),
-                    'approved_by' => null,
-                    'moderation_reason' => $decisionReason,
-                    'risk_score' => $assessment['score'],
-                    'risk_level' => $assessment['level'],
-                ])->save();
-
-                $review->forceFill([
-                    'status' => ProductApprovalReview::STATUS_APPROVED,
-                    'source' => ProductApprovalReview::SOURCE_AUTOMATIC,
-                    'decision_reason' => $decisionReason,
-                    'reviewed_at' => now(),
-                ]);
-            } else {
-                $decisionReason = $this->manualReviewReason($assessment['reasons']);
-
-                $current->forceFill([
-                    'moderation_reason' => $decisionReason,
-                    'risk_score' => $assessment['score'],
-                    'risk_level' => $assessment['level'],
-                ])->save();
-
-                $review->decision_reason = $decisionReason;
-            }
-
-            $review->save();
-
-            return true;
-        });
+        $review->decision_reason = $decisionReason;
     }
 
     private function decide(
@@ -431,6 +591,15 @@ class ProductModerationService
                     'reviewed_at' => now(),
                 ])->save();
 
+                $this->eventRecorder->record(
+                    $review,
+                    ProductModerationEvent::TYPE_SUPERSEDED,
+                    $reviewer,
+                    (string) $review->decision_reason,
+                    metadata: ['superseded_by_version' => $version + 1],
+                    idempotencyKey: 'product-review:'.$review->getKey().':superseded',
+                );
+
                 $version++;
                 $current->forceFill([
                     'approved_status' => Product::APPROVAL_PENDING,
@@ -457,6 +626,14 @@ class ProductModerationService
                     'context_hash' => $contextHash,
                     'submitted_at' => $current->submitted_at ?? now(),
                 ]);
+
+                $this->eventRecorder->record(
+                    $review,
+                    ProductModerationEvent::TYPE_SUBMITTED,
+                    $reviewer,
+                    'Created for a manual moderation decision.',
+                    idempotencyKey: 'product-review:'.$review->getKey().':submitted',
+                );
             }
 
             $assessment = $this->riskEvaluator->evaluate($current);
@@ -472,6 +649,7 @@ class ProductModerationService
                 'risk_score' => $assessment['score'],
                 'risk_level' => $assessment['level'],
                 'moderation_fingerprint' => $fingerprint,
+                ...$this->decisionEligibilityPins($context, $contextHash),
             ])->save();
 
             $review->forceFill([
@@ -486,6 +664,16 @@ class ProductModerationService
                 'context_hash' => $contextHash,
                 'reviewed_at' => $reviewedAt,
             ])->save();
+
+            $this->eventRecorder->record(
+                $review,
+                $decision === Product::APPROVAL_APPROVED
+                    ? ProductModerationEvent::TYPE_MANUAL_APPROVED
+                    : ProductModerationEvent::TYPE_MANUAL_REJECTED,
+                $reviewer,
+                $decisionReason,
+                $this->riskResult($assessment),
+            );
 
             return $review;
         });
@@ -509,6 +697,8 @@ class ProductModerationService
             'product_id' => $product->getKey(),
             'version' => $version,
         ]);
+        $wasNew = ! $review->exists;
+        $previousContextHash = (string) $review->context_hash;
 
         if (! $review->exists) {
             $review->forceFill([
@@ -527,7 +717,40 @@ class ProductModerationService
             'context_hash' => $contextHash,
         ])->save();
 
+        if ($wasNew) {
+            $this->eventRecorder->record(
+                $review,
+                ProductModerationEvent::TYPE_SUBMITTED,
+                $submittedBy,
+                $review->submission_reason,
+                idempotencyKey: 'product-review:'.$review->getKey().':submitted',
+            );
+        } elseif (! hash_equals($previousContextHash, $contextHash)) {
+            $this->eventRecorder->record(
+                $review,
+                ProductModerationEvent::TYPE_CONTEXT_REEVALUATED,
+                $submittedBy,
+                $this->cleanReason($reason) ?? 'Pending moderation context refreshed.',
+                metadata: ['previous_context_hash' => $previousContextHash],
+                idempotencyKey: 'product-review:'.$review->getKey().':context:'.$contextHash,
+            );
+        }
+
         return $review;
+    }
+
+    /**
+     * @param  array{score: int, level: string, reasons: array<int, array<string, mixed>>, auto_approvable: bool}  $assessment
+     * @return array{score: int, level: string, reasons: array<int, array<string, mixed>>, auto_approvable: bool}
+     */
+    private function riskResult(array $assessment): array
+    {
+        return [
+            'score' => (int) $assessment['score'],
+            'level' => (string) $assessment['level'],
+            'reasons' => $assessment['reasons'],
+            'auto_approvable' => (bool) $assessment['auto_approvable'],
+        ];
     }
 
     private function contentSnapshot(Product $product): array
@@ -681,39 +904,67 @@ class ProductModerationService
 
     private function evaluationContext(Product $product): array
     {
-        $store = DB::table('stores')
-            ->leftJoin('users', 'users.id', '=', 'stores.seller_id')
-            ->leftJoin('kycs', 'kycs.user_id', '=', 'users.id')
-            ->where('stores.id', $product->store_id)
-            ->first([
-                'stores.status as store_status',
-                'stores.suspended_at',
-                'stores.auto_approve_products',
-                'users.user_type as seller_user_type',
-                'users.email_verified_at',
-                'kycs.status as kyc_status',
-            ]);
+        $store = Store::query()
+            ->with('seller.kyc')
+            ->whereKey($product->store_id)
+            ->first();
 
         if ($store === null) {
             return [
+                'store_id' => null,
                 'store_status' => null,
-                'store_suspended' => null,
+                'store_is_active' => false,
+                'store_not_suspended' => false,
                 'auto_approve_products' => null,
+                'auto_approval_grant_current' => false,
+                'auto_approval_eligible' => false,
+                'store_eligible' => false,
+                'store_eligibility_epoch' => null,
+                'store_moderation_version' => null,
+                'store_reviewed_version' => null,
+                'store_review_is_current' => false,
+                'seller_id' => null,
                 'seller_user_type' => null,
                 'seller_email_verified' => null,
+                'seller_eligibility_epoch' => null,
+                'kyc_id' => null,
                 'kyc_status' => null,
+                'kyc_expires_on' => null,
+                'kyc_eligibility_epoch' => null,
+                'kyc_eligible' => false,
+                'eligible' => false,
                 'automatic_approval_enabled' => (bool) config('product_moderation.automatic_approval_enabled', true),
+                'policy_version' => (string) config('product_moderation.policy_version'),
             ];
         }
 
         return [
-            'store_status' => $store->store_status,
-            'store_suspended' => $store->suspended_at !== null,
-            'auto_approve_products' => (bool) $store->auto_approve_products,
-            'seller_user_type' => $store->seller_user_type,
-            'seller_email_verified' => $store->email_verified_at !== null,
-            'kyc_status' => $store->kyc_status,
+            ...app(SellerEligibilityService::class)->storeSnapshot($store),
             'automatic_approval_enabled' => (bool) config('product_moderation.automatic_approval_enabled', true),
+            'policy_version' => (string) config('product_moderation.policy_version'),
+        ];
+    }
+
+    /** @return array<string, int|string|null> */
+    private function decisionEligibilityPins(
+        array $context,
+        ?string $contextHash = null,
+    ): array {
+        return [
+            'reviewed_user_eligibility_epoch' => $context['seller_eligibility_epoch'] === null
+                ? null
+                : (int) $context['seller_eligibility_epoch'],
+            'reviewed_kyc_id' => $context['kyc_id'] === null
+                ? null
+                : (int) $context['kyc_id'],
+            'reviewed_kyc_eligibility_epoch' => $context['kyc_eligibility_epoch'] === null
+                ? null
+                : (int) $context['kyc_eligibility_epoch'],
+            'reviewed_store_eligibility_epoch' => $context['store_eligibility_epoch'] === null
+                ? null
+                : (int) $context['store_eligibility_epoch'],
+            'reviewed_context_hash' => $contextHash ?? $this->fingerprint($context),
+            'reviewed_policy_version' => (string) $context['policy_version'],
         ];
     }
 

@@ -4,6 +4,7 @@ namespace App\Policies;
 
 use App\Models\Product;
 use App\Models\User;
+use App\Services\SellerEligibilityService;
 
 class ProductPolicy
 {
@@ -83,15 +84,6 @@ class ProductPolicy
 
     private function canManageProducts(User $user): bool
     {
-        if ($user->user_type !== 'vendor') {
-            return false;
-        }
-
-        $user->loadMissing(['kyc', 'store']);
-
-        return $user->kyc?->status === 'approved'
-            && $user->email_verified_at !== null
-            && in_array($user->store?->status, ['draft', 'pending', 'approved'], true)
-            && $user->store?->suspended_at === null;
+        return app(SellerEligibilityService::class)->canManageProducts($user);
     }
 }

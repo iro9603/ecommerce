@@ -24,21 +24,26 @@ return new class extends Migration
         // cannot safely remain approved under versioned moderation, so they
         // are moved back to the review queue instead of being grandfathered.
         DB::table('stores')
+            ->select('id')
             ->where('status', 'approved')
-            ->update([
-                'status' => 'pending',
-                'is_active' => false,
-                'approved_at' => null,
-                'approved_by' => null,
-                'rejected_at' => null,
-                'rejection_reason' => null,
-                'suspended_at' => null,
-                'moderation_version' => 0,
-                'reviewed_version' => null,
-                'moderation_fingerprint' => null,
-                'moderation_reason' => 'Security review required after enabling store moderation versioning.',
-                'updated_at' => now(),
-            ]);
+            ->chunkById(500, static function ($stores): void {
+                DB::table('stores')
+                    ->whereIn('id', $stores->pluck('id')->all())
+                    ->update([
+                        'status' => 'pending',
+                        'is_active' => false,
+                        'approved_at' => null,
+                        'approved_by' => null,
+                        'rejected_at' => null,
+                        'rejection_reason' => null,
+                        'suspended_at' => null,
+                        'moderation_version' => 0,
+                        'reviewed_version' => null,
+                        'moderation_fingerprint' => null,
+                        'moderation_reason' => 'Security review required after enabling store moderation versioning.',
+                        'updated_at' => now(),
+                    ]);
+            });
     }
 
     public function down(): void

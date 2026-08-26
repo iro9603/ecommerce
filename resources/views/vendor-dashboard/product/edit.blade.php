@@ -393,7 +393,7 @@
                                     <div id="imagePreviewContainer" class="image-preview-container">
                                         @foreach ($product?->images ?? [] as $image)
                                             <div class = "image-preview-item" data-image-id = "{{ $image->id }}">
-                                                <img src = "{{ asset($image->path) }}">
+                                                <img src = "{{ $image->controlledUrl() }}">
                                                 <span class="remove-image"
                                                     data-image-id="{{ $image->id }}">&times;</span>
                                             </div>
@@ -412,7 +412,7 @@
                             <div class="col-md-12">
                                 <div class="accordion" id="accordion-default">
                                     @foreach ($attributesWithValues as $attribute)
-                                        @include('vendor.product.partials.attribute', [
+                                        @include('vendor-dashboard.product.partials.attribute', [
                                             'attribute' => $attribute,
                                             'product' => $product,
                                         ])

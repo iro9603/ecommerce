@@ -114,7 +114,7 @@
                                         </td>
 
                                         <td>
-                                            <img style="width:50px" src="{{ asset($product->primaryImage?->path) }}"
+                                            <img style="width:50px" src="{{ $product->primaryImage?->controlledUrl() }}"
                                                 alt="">
                                         </td>
 

@@ -151,16 +151,12 @@ test('an idempotent enable request revokes stale trust when the seller is no lon
         ->assertJsonValidationErrors('enabled');
 
     $audit = StoreAutoApprovalAudit::query()->sole();
-    $newReview = ProductApprovalReview::query()
-        ->where('product_id', $product->getKey())
-        ->where('version', 2)
-        ->sole();
 
     expect($vendor['store']->fresh()->auto_approve_products)->toBeFalse()
-        ->and($product->fresh()->approved_status)->toBe(Product::APPROVAL_PENDING)
-        ->and($product->fresh()->moderation_version)->toBe(2)
-        ->and($product->fresh()->reviewed_version)->toBeNull()
-        ->and($newReview->status)->toBe(ProductApprovalReview::STATUS_PENDING)
+        ->and($product->fresh()->approved_status)->toBe(Product::APPROVAL_APPROVED)
+        ->and($product->fresh()->moderation_version)->toBe(1)
+        ->and($product->fresh()->reviewed_version)->toBe(1)
+        ->and(Product::query()->published()->whereKey($product)->exists())->toBeFalse()
         ->and($audit->previous_value)->toBeTrue()
         ->and($audit->new_value)->toBeFalse()
         ->and($audit->admin_id)->toBe($admin->getKey())

@@ -16,13 +16,10 @@ class CheckKycStatus
     public function handle(Request $request, Closure $next): Response
     {
         $user = auth('web')->user();
-        if ($user->kyc->status == 'pending' || $user->kyc->status == 'rejected' || $user->kyc?->status == null) {
-            return redirect()->route('vendor.dashboard');
-        } elseif ($user->kyc->status == 'approved') {
-
+        if ($user?->kyc?->isEligibleAt()) {
             return $next($request);
         }
 
-        return abort(403);
+        return redirect()->route('vendor.dashboard');
     }
 }

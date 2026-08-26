@@ -14,6 +14,7 @@ use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class KycRequestController extends Controller implements HasMiddleware
@@ -136,9 +137,25 @@ class KycRequestController extends Controller implements HasMiddleware
                 'string',
                 'max:2000',
             ],
+            'document_expiry_date' => ['nullable', 'date_format:Y-m-d'],
         ]);
 
         $status = $validated['status'];
+
+        if (array_key_exists('document_expiry_date', $validated)) {
+            $kyc_request->document_expiry_date = $validated['document_expiry_date'];
+        }
+
+        if ($status === 'approved') {
+            $candidate = $kyc_request->replicate();
+            $candidate->status = 'approved';
+
+            if (! $candidate->isEligibleAt()) {
+                throw ValidationException::withMessages([
+                    'document_expiry_date' => 'An unexpired document date is required before KYC can be approved.',
+                ]);
+            }
+        }
 
         $kyc_request->status = $status;
         $kyc_request->reviewed_by = $request->user('admin')->id;
@@ -173,11 +190,13 @@ class KycRequestController extends Controller implements HasMiddleware
             $this->body = 'Sorry! Your KYC Application has been rejected.';
         }
 
-        MailService::send(
-            to: $kyc_request->user->email,
-            subject: $this->subject,
-            body: $this->body
-        );
+        if ($this->subject !== null && $this->body !== null) {
+            MailService::send(
+                to: $kyc_request->user->email,
+                subject: $this->subject,
+                body: $this->body
+            );
+        }
 
         AlertService::updated('KYC status updated successfully.');
 

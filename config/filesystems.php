@@ -50,7 +50,9 @@ return [
         'private' => [
             'driver' => 'local',
             'root' => storage_path('app/private'),
-            'throw' => false,
+            'visibility' => 'private',
+            'serve' => false,
+            'throw' => true,
         ],
 
         's3' => [

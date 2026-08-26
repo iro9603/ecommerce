@@ -13,8 +13,8 @@ use App\Observers\KycStatusModerationObserver;
 use App\Observers\ProductReferenceModerationObserver;
 use App\Observers\ProductSoftDeleteModerationObserver;
 use App\Observers\StoreSoftDeleteModerationObserver;
-use App\Observers\SellerEmailModerationObserver;
-use App\Observers\SellerTypeModerationObserver;
+use App\Observers\SellerEligibilityModerationObserver;
+use App\Observers\StoreEligibilityEpochObserver;
 use App\Policies\ProductPolicy;
 use Illuminate\Pagination\Paginator;
 use Illuminate\Support\Facades\Gate;
@@ -42,9 +42,9 @@ class AppServiceProvider extends ServiceProvider
         \App\Models\Store::observe(StoreSoftDeleteModerationObserver::class);
         Category::observe(ProductReferenceModerationObserver::class);
         Tag::observe(ProductReferenceModerationObserver::class);
-        User::observe(SellerTypeModerationObserver::class);
-        User::observe(SellerEmailModerationObserver::class);
+        User::observe(SellerEligibilityModerationObserver::class);
         Kyc::observe(KycStatusModerationObserver::class);
+        \App\Models\Store::observe(StoreEligibilityEpochObserver::class);
 
         // Implicitly grant "Super Admin" role all permissions
         // This works in the app by using gate-related functions like auth()->user->can() and @can()

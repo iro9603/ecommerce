@@ -1,519 +1,490 @@
 # Operación, despliegue y troubleshooting
 
-[Volver al índice del módulo](README.md)
+[Volver al índice](README.md)
 
-## Objetivo
-
-Este runbook indica cómo configurar, desplegar y operar el módulo de moderación y seguridad de productos.
-
-La implementación fue validada con migraciones en modo `--pretend`. No se debe asumir que una base de datos concreta ya tiene las migraciones aplicadas; comprobar siempre `migrate:status`.
+Este runbook cubre moderación de Product y Store, elegibilidad de seller/KYC,
+archivos digitales y medios privados de Product. No presupone que una base
+concreta esté migrada ni que la suite global esté verde: antes de producción se
+deben registrar los resultados del entorno de destino.
 
 ## Prerrequisitos
 
-- Base de datos disponible.
-- Tabla `jobs`, `job_batches` y `failed_jobs` creada por la migración base de Laravel.
-- Un worker de cola persistente en ambientes donde se espere autoevaluación.
-- Cache compartida entre workers para `ShouldBeUnique`; la configuración actual usa database cache.
-- Permisos de escritura en `storage/app/private` y `storage/framework`; si `PRODUCT_DIGITAL_UPLOAD_DISK` apunta a otro disco (por ejemplo `s3`), permisos y credenciales de ese disco.
-- Límites PHP/proxy mayores que el chunk configurado.
-- Backup de base de datos y storage antes de aplicar las migraciones.
-- Home, listado y detalle públicos disponibles y actualizados para usar `Product::published()`.
+- backup recuperable de base de datos, **public/uploads** y storage privado;
+- PHP 8.3 y extensiones usadas por Laravel, DOM y fileinfo;
+- tablas **jobs**, **job_batches**, **failed_jobs**, **cache** y
+  **cache_locks** disponibles si se usan los defaults database;
+- un worker supervisado y un scheduler ejecutándose;
+- cache compartido entre nodos para **ShouldBeUnique**, **withoutOverlapping**
+  y **onOneServer**;
+- usuario web y CLI con lectura/escritura sobre **storage/app/private** y
+  **storage/framework**;
+- límites PHP y proxy superiores al chunk configurado;
+- permisos administrativos sembrados y asignados;
+- **APP_ENV=production**, **APP_DEBUG=false** y APP_KEY propia.
 
-Producción debe usar `APP_ENV=production`, `APP_DEBUG=false` y una `APP_KEY` propia. `AdminSeeder` contiene credenciales fijas de desarrollo; no deben desplegarse como credencial válida y la cuenta inicial debe rotarse inmediatamente.
+**artisan down** no detiene workers. Con varias réplicas, el maintenance driver
+file tampoco coordina todos los nodos; retirar tráfico en el balanceador o usar
+un store de mantenimiento compartido.
 
-## Variables de entorno
+## Variables de entorno exactas
 
-### Moderación
+### Moderación y cola
+
+| Variable | Default efectivo | Uso |
+| --- | ---: | --- |
+| PRODUCT_AUTOMATIC_APPROVAL_ENABLED | true | Kill switch global de autoaprobación. |
+| PRODUCT_MAXIMUM_AUTOMATIC_RISK_SCORE | 20 | Score máximo automático. |
+| QUEUE_CONNECTION | database | Backend de jobs. |
+| CACHE_STORE | database | Locks de jobs únicos y scheduler. |
+| DB_QUEUE_RETRY_AFTER | 180 en .env.example | Reserva database; el fallback de config es 90 y no es seguro para el job de 120 s. |
+
+**ReevaluateProductsAfterReferenceChange** tiene timeout 120 s y
+**EvaluateProductForApproval** 60 s. El fallback 90 de
+**DB_QUEUE_RETRY_AFTER** en config es insuficiente para el job de 120 s.
+En producción database debe conservarse explícitamente:
+
+~~~dotenv
+QUEUE_CONNECTION=database
+CACHE_STORE=database
+DB_QUEUE_RETRY_AFTER=180
+~~~
+
+El timeout del worker debe ser mayor que 120 s y menor que retry_after; por
+ejemplo **--timeout=150** con retry_after 180.
+
+### Storage privado
 
 | Variable | Default | Uso |
-| --- | ---: | --- |
-| `PRODUCT_AUTOMATIC_APPROVAL_ENABLED` | `true` | Kill switch global. `false` deja todo pendiente aunque la tienda sea confiable. |
-| `PRODUCT_MAXIMUM_AUTOMATIC_RISK_SCORE` | `20` | Máximo score permitido. Actualmente cualquier motivo también bloquea por sí mismo. |
+| --- | --- | --- |
+| PRODUCT_MEDIA_DISK | private | Imágenes de Product. |
+| PRODUCT_MEDIA_ALLOWED_DISKS | private | Allowlist separada por comas. |
+| PRODUCT_DIGITAL_UPLOAD_DISK | private | Archivos digitales finales. |
+| PRODUCT_DIGITAL_ALLOWED_DISKS | private | Allowlist separada por comas. |
 
-La autoaprobación sigue siendo opt-in por tienda aunque el interruptor global esté activo.
+Ambos servicios rechazan el disco si:
 
-### Archivos digitales
+- no está en su allowlist o no existe en **filesystems.disks**;
+- tiene visibility public;
+- tiene **serve=true**;
+- no tiene **throw=true**;
+- el driver no es local o s3;
+- siendo local, su root está dentro de **public** o
+  **storage/app/public**.
 
-| Variable | Default | Equivalencia |
-| --- | ---: | --- |
-| `PRODUCT_DIGITAL_UPLOAD_DISK` | `local` | Disco único para escribir y borrar archivos digitales (por ejemplo `s3` en producción). |
-| `PRODUCT_MAX_DIGITAL_FILE_SIZE_KB` | `262144` | 256 MiB por archivo. |
-| `PRODUCT_MAX_DIGITAL_CHUNK_SIZE_KB` | `10240` | 10 MiB por chunk. |
-| `PRODUCT_MAX_DIGITAL_CHUNKS` | `4096` | Máximo de chunks por upload. |
-| `PRODUCT_MAX_ACTIVE_DIGITAL_UPLOADS` | `3` | Uploads incompletos por uploader. |
-| `PRODUCT_DIGITAL_UPLOAD_TTL_HOURS` | `24` | Edad para considerar stale un upload incompleto. |
-| `PRODUCT_MAX_DIGITAL_FILES_PER_PRODUCT` | `20` | Archivos registrados por producto. |
-| `PRODUCT_MAX_DIGITAL_SIZE_PER_PRODUCT_KB` | `1048576` | 1 GiB acumulado por producto. |
-| `PRODUCT_MAX_DIGITAL_SIZE_PER_STORE_KB` | `5242880` | 5 GiB acumulado por tienda. |
+El disco **private** incluido cumple el contrato: root
+**storage/app/private**, visibility private, serve false y throw true. El disco
+**local** incluido no lo cumple porque tiene serve true y throw false. El
+**s3** incluido tampoco pasa mientras conserve throw false; cambiar sólo el
+env a s3 no basta: la configuración desplegada debe hacerlo fail-fast y el
+bucket debe ser privado.
 
-Si se cambia el chunk máximo, también revisar:
+**storage/app/private** debe existir antes de atender tráfico: el servicio de
+media local exige un root existente. Los chunks se ensamblan siempre en
+**storage/app/private/chunks**, incluso si el objeto final usa s3; el servicio
+crea esa carpeta con modo 0700, pero el proceso necesita permiso sobre su
+padre. El symlink de **storage:link** no se usa para Product media ni archivos
+digitales.
 
-- `upload_max_filesize`;
-- `post_max_size`;
-- límites del reverse proxy/web server;
-- timeout de la petición.
+Store logo/banner permanecen aparte en **public/uploads/stores**.
 
-El proxy necesita aceptar el chunk, no el archivo completo.
+### Límites digitales
+
+| Variable | Default |
+| --- | ---: |
+| PRODUCT_MAX_DIGITAL_FILE_SIZE_KB | 262144 |
+| PRODUCT_MAX_DIGITAL_CHUNK_SIZE_KB | 10240 |
+| PRODUCT_MAX_DIGITAL_CHUNKS | 4096 |
+| PRODUCT_MAX_ACTIVE_DIGITAL_UPLOADS | 3 |
+| PRODUCT_DIGITAL_UPLOAD_TTL_HOURS | 24 |
+| PRODUCT_MAX_DIGITAL_FILES_PER_PRODUCT | 20 |
+| PRODUCT_MAX_DIGITAL_SIZE_PER_PRODUCT_KB | 1048576 |
+| PRODUCT_MAX_DIGITAL_SIZE_PER_STORE_KB | 5242880 |
+
+Si cambia el chunk máximo, ajustar **upload_max_filesize**,
+**post_max_size**, reverse proxy y timeouts. El proxy recibe un chunk, no el
+archivo completo.
 
 ### Variantes
 
-| Variable | Default | Uso |
-| --- | ---: | --- |
-| `PRODUCT_MAX_VALUES_PER_ATTRIBUTE` | `50` | Valores permitidos por grupo. |
-| `PRODUCT_MAX_ATTRIBUTE_GROUPS` | `6` | Grupos por producto. |
-| `PRODUCT_MAX_VARIANT_COMBINATIONS` | `500` | Producto cartesiano máximo. |
+| Variable | Default |
+| --- | ---: |
+| PRODUCT_MAX_VALUES_PER_ATTRIBUTE | 50 |
+| PRODUCT_MAX_ATTRIBUTE_GROUPS | 6 |
+| PRODUCT_MAX_VARIANT_COMBINATIONS | 500 |
+
+## Efectos de migraciones
+
+Revisar siempre **php artisan migrate:status**. Las migraciones relevantes son:
+
+| Migración | Efecto no trivial |
+| --- | --- |
+| 2026_08_15_155959_add_is_active_to_stores | Añade el flag y deja todas las Stores legacy inactivas. |
+| 2026_08_15_160000_add_moderation_fields_to_products_and_stores | Añade versionado de Product/trust y mueve aprobados legacy a pending. |
+| 2026_08_15_160001_create_product_approval_reviews_table | Crea snapshots/versiones de revisión. |
+| 2026_08_15_160002_enforce_unique_product_slugs | Renombra duplicados posteriores y crea products_slug_unique. |
+| 2026_08_16_000000_create_store_auto_approval_audits_table | Crea auditoría de trust. |
+| 2026_08_17_113849_add_store_approval_fields_to_stores | Añade aprobador, rechazo y motivo. |
+| 2026_08_17_120000_drop_disk_from_product_files_table | Elimina disk como autoridad de borrado. |
+| 2026_08_18_000001_add_store_moderation_columns_to_stores | Añade versionado y mueve Stores approved legacy a pending/inactive. |
+| 2026_08_18_000002_create_store_approval_reviews_table | Crea historial de Store. |
+| 2026_08_18_000003_add_product_evaluation_context | Separa contenido/contexto y vuelve pending los Products approved. |
+| 2026_08_18_000004_add_sha256_to_product_files_table | Añade hash nullable que debe rellenarse. |
+| 2026_08_24_000001_add_eligibility_generations | Añade epochs/pins y deshabilita todos los grants legacy. |
+| 2026_08_24_000002_create_seller_eligibility_events_table | Crea la traza idempotente de cambios de elegibilidad; el flujo de aplicación inserta, pero el modelo no impone inmutabilidad frente a SQL directo. |
+| 2026_08_24_000100_create_product_moderation_events_table | Crea el ledger de eventos de Product, append-only en la capa Eloquent. |
+
+Los métodos down no revierten los cambios de datos: no restauran aprobaciones,
+actividad, trust ni slugs anteriores. Bajar tablas borra historial. Bajar
+**sha256** pierde hashes; bajar epochs elimina pins. Ninguna migración devuelve
+al árbol público los medios ya movidos al disco privado.
+
+## Preflight
+
+1. Confirmar backup y un restore ensayado.
+2. Registrar **migrate:status** y batches actuales.
+3. Ejecutar **migrate --pretend --no-interaction** contra el mismo motor y
+   schema de producción.
+4. Contar Stores/Products por estado, hashes nulos y grants activos.
+5. Confirmar espacio en storage privado y acceso al disco final.
+6. Confirmar que **storage/app/private** existe y no es servible por HTTP.
+7. Confirmar scheduler, cache compartido y supervisor de cola.
+8. Pausar escrituras, uploads y workers antes de migrar.
+9. Inventariar medios Product legacy y distinguir
+   **public/uploads/stores**, que no se migra.
+10. Ejecutar pruebas focalizadas y guardar el resultado; no inferir el estado
+    de la suite global desde este documento.
+
+Consultas útiles:
+
+~~~sql
+SELECT status, is_active, COUNT(*) FROM stores GROUP BY status, is_active;
+SELECT approved_status, COUNT(*) FROM products GROUP BY approved_status;
+SELECT COUNT(*) AS missing_sha256 FROM product_files WHERE sha256 IS NULL;
+SELECT COUNT(*) AS trusted_stores FROM stores WHERE auto_approve_products = 1;
+SELECT slug, COUNT(*) FROM products GROUP BY slug HAVING COUNT(*) > 1;
+~~~
+
+## Despliegue con ventana de mantenimiento
+
+El orden recomendado es:
+
+1. retirar tráfico/activar mantenimiento en la release anterior;
+2. detener el gestor de workers y esperar jobs activos;
+3. tomar backup final;
+4. desplegar código y env nuevos;
+5. crear/verificar directorios privados y credenciales;
+6. inspeccionar SQL pretend y ejecutar migraciones;
+7. sembrar permisos;
+8. migrar media Product pública a privada;
+9. rellenar hashes digitales;
+10. ejecutar una reconciliación de elegibilidad;
+11. reconstruir caches;
+12. reiniciar y reanudar workers/scheduler;
+13. hacer smoke tests antes de devolver tráfico.
+
+Comandos de la release nueva:
+
+~~~bash
+php artisan migrate:status
+php artisan migrate --pretend --no-interaction
+php artisan migrate --force --no-interaction
+
+php artisan db:seed --class='Database\Seeders\Admin\PermissionSeeder' --force
+php artisan permission:cache-reset
+~~~
+
+Si el deploy usa Sail, prefijar los comandos con **./vendor/bin/sail**. En un
+release basado en symlinks, ejecutar desde el directorio de la release nueva,
+no desde un path que el swap vaya a eliminar.
+
+## Migración de media Product a storage privado
+
+El comando procesa sólo filas de **product_images**:
+
+~~~bash
+php artisan products:migrate-media-private --dry-run
+php artisan products:migrate-media-private
+~~~
+
+El dry-run:
 
-### Cola
+- normaliza cada path y valida el MIME real del archivo público;
+- muestra **Would migrate** sin escribir ni borrar;
+- considera correcto que el objeto ya exista en privado;
+- marca error si no existe ni la copia pública ni la privada;
+- termina con código distinto de cero si hubo fallos.
 
-Configuración mínima recomendada:
-
-```dotenv
-QUEUE_CONNECTION=database
-DB_QUEUE_RETRY_AFTER=180
-```
-
-`EvaluateProductForApproval` tiene timeout de 60 segundos y `ReevaluateProductsAfterReferenceChange` de 120. `retry_after` debe ser mayor que el job más largo para evitar que otro worker lo reserve antes de que termine.
-
-Después de modificar `.env`:
-
-```bash
-./vendor/bin/sail artisan config:clear
-./vendor/bin/sail artisan config:cache
-./vendor/bin/sail artisan queue:restart
-```
-
-## Permisos
-
-| Permiso | Guard | Responsabilidad |
-| --- | --- | --- |
-| `Product Management` | `admin` | CRUD, archivos, atributos, variantes y decisiones de productos. |
-| `Store Auto-Approval Management` | `admin` | Activar/desactivar confianza automática por tienda. |
-
-`Product Management` no concede el segundo permiso. La separación evita que cualquier editor pueda confiar en una tienda.
-
-Una instancia de `Admin` con rol `Super Admin` obtiene bypass por `Gate::before`. Un usuario web/vendor con un rol homónimo no lo obtiene.
-
-Crear o actualizar permisos:
-
-```bash
-./vendor/bin/sail artisan db:seed --class='Database\Seeders\Admin\PermissionSeeder'
-./vendor/bin/sail artisan permission:cache-reset
-```
-
-Después se asigna desde:
-
-```text
-Admin > Access Management > Role > Edit
-```
-
-La tarjeta de autoaprobación no aparece si el admin no tiene el permiso dedicado.
-
-## Efecto de las migraciones
-
-### `2026_08_15_160000_add_moderation_fields_to_products_and_stores`
-
-- Añade campos, índices y foreign key de moderación.
-- Añade `stores.auto_approve_products = false`.
-- Cambia todos los productos legacy `approved` a `pending`.
-- Usa la razón `Security review required after enabling versioned moderation.`.
-
-Este cambio de estado es intencional: no existe snapshot que demuestre qué contenido de un producto legacy fue revisado.
-
-El método `down()` elimina columnas, pero no vuelve a poner esos productos en `approved`.
-
-### `2026_08_15_160001_create_product_approval_reviews_table`
-
-- Crea historial versionado, snapshots, hashes y riesgo.
-- El rollback elimina la tabla y su historial.
-
-### `2026_08_15_160002_enforce_unique_product_slugs`
-
-- Detecta duplicados.
-- Conserva el slug del ID más antiguo.
-- Renombra duplicados posteriores con `-{id}` y contador si es necesario.
-- Crea `products_slug_unique`.
-
-El rollback elimina el índice, pero no restaura los slugs anteriores.
-
-### `2026_08_16_000000_create_store_auto_approval_audits_table`
-
-- Crea la auditoría de confianza de tienda.
-- El rollback elimina ese historial.
-
-### `2026_08_17_120000_drop_disk_from_product_files_table`
-
-- Elimina la columna `disk` de `product_files` para que escritura y borrado usen siempre `config('products.digital_upload.disk')`.
-- El `down()` restaura la columna con default `local`.
-- Es defensiva (`hasTable`/`hasColumn`), por lo que puede aplicarse en bases que ya no tengan la columna.
-
-## Checklist previo al despliegue
-
-1. Confirmar backup recuperable de base de datos y archivos.
-2. Ejecutar la suite focalizada.
-3. Confirmar que `/`, `/products` y `/products/{slug}` usan `published()`, e inventariar cualquier consumidor público nuevo.
-4. Revisar cuántos productos aprobados pasarán a pending.
-5. Revisar slugs duplicados y preparar redirects SEO si aplica.
-6. Confirmar que existe worker y `DB_QUEUE_RETRY_AFTER > 120`.
-7. Preparar cómo pausar Supervisor, systemd, Horizon o el gestor de workers.
-8. Confirmar permisos de `storage/app/private`.
-9. Verificar que PHP/proxy aceptan el tamaño de chunk.
-10. Comunicar que productos legacy requerirán revisión.
-11. Definir qué roles recibirán el permiso de confianza de tienda.
-12. Confirmar `APP_DEBUG=false`, APP_KEY válida y rotación de la cuenta creada por seeders.
-
-Consultas de diagnóstico previas:
-
-```sql
-SELECT approved_status, COUNT(*) AS total
-FROM products
-GROUP BY approved_status;
-
-SELECT slug, COUNT(*) AS total
-FROM products
-GROUP BY slug
-HAVING COUNT(*) > 1;
-```
-
-## Procedimiento de despliegue
-
-Ejemplo seguro con ventana de mantenimiento:
-
-Antes del bloque, pausar el gestor de workers y esperar a que terminen los jobs activos. `artisan down` sólo detiene tráfico HTTP; no detiene la cola.
-
-```bash
-./vendor/bin/sail artisan migrate:status
-./vendor/bin/sail artisan migrate --pretend --no-interaction
-
-./vendor/bin/sail artisan down --retry=60
-
-./vendor/bin/sail artisan migrate --force
-./vendor/bin/sail artisan db:seed --class='Database\Seeders\Admin\PermissionSeeder' --force
-./vendor/bin/sail artisan permission:cache-reset
-./vendor/bin/sail artisan optimize:clear
-./vendor/bin/sail artisan config:cache
-./vendor/bin/sail artisan view:cache
-./vendor/bin/sail artisan queue:restart
-```
-
-Después de migrar y limpiar caches, reanudar/iniciar los workers con el código nuevo y confirmar que procesan un job de prueba. Sólo entonces abrir tráfico:
-
-```bash
-./vendor/bin/sail artisan up
-```
-
-Si todavía no existe un supervisor en desarrollo, iniciar en otra terminal:
-
-```bash
-./vendor/bin/sail artisan queue:work --queue=default --tries=3 --timeout=150
-```
-
-En producción debe usarse Supervisor, systemd u otro gestor que reinicie el worker. Su timeout debe ser mayor que 120 segundos y menor que `retry_after`.
-
-El repositorio no incluye una configuración lista de Supervisor, systemd o Horizon; provisionarla forma parte del despliegue. El `queue:listen` de `composer dev` es sólo para desarrollo y no reemplaza un worker supervisado.
-
-Después del despliegue:
-
-1. asignar los permisos a roles no-Super Admin;
-2. revisar productos legacy pendientes;
-3. confirmar que se procesan jobs;
-4. realizar smoke tests;
-5. monitorear `failed_jobs`, logs y almacenamiento.
-
-## Procedimiento administrativo de autoaprobación
-
-### Activar
-
-1. Entrar con un admin que tenga `Store Auto-Approval Management`.
-2. Abrir la edición de un producto de la tienda.
-3. Localizar `Store Auto-Approval`.
-4. Verificar que la tienda esté activa y no suspendida.
-5. Verificar que el seller sea vendor, tenga email verificado y KYC aprobado.
-6. Activar el switch.
-7. Escribir una razón de 10–1000 caracteres.
-8. Guardar.
-
-El backend guarda la auditoría y reenvía productos pendientes. Sólo un producto físico sin motivos bloqueantes podrá aprobarse automáticamente.
-
-### Desactivar
-
-La desactivación siempre está permitida, incluso si la tienda está suspendida o perdió KYC. Requiere razón y queda auditada.
-
-Productos ya aprobados no se revocan por este switch. Para retirar publicación de inmediato:
-
-- inactivar o suspender la tienda; o
-- cambiar el estado del producto; o
-- enviar el producto nuevamente a revisión.
-
-### Cambio de `seller.user_type`
-
-Toda actualización Eloquent ordinaria de `User.user_type` activa `SellerTypeModerationObserver` después del UPDATE. El observer ejecuta `SellerTypeRevalidationService` sincrónicamente. Su primera fase transaccional:
-
-- bloquea seller y tiendas en orden estable;
-- desactiva la confianza automática existente;
-- vuelve inmediatamente a pending los productos aprobados y limpia su decisión;
-- registra auditoría de sistema si la confianza estaba activa.
-
-Con esa barrera ya persistida, una segunda fase llama `markForReview()` para aprobados/pendientes, crea versiones/snapshots y despacha una evaluación por producto. El contador `pending_products_resubmitted` avanza sólo por cada producto completado.
-
-El storefront deja de exponer los productos del seller no-vendor desde la siguiente consulta porque `published()` revalida el tipo directamente. El evaluador también añade `seller_not_vendor`; regresar a `vendor` no reactiva confianza.
-
-Para tiendas con muchos productos, programar el cambio en una ventana de baja actividad: la fase 1 mantiene locks sólo mientras asegura revocación/pending y la fase 2 remodera secuencialmente, por lo que la latencia crece con la cantidad de productos. Después, vigilar los jobs `EvaluateProductForApproval`.
-
-Si falla la segunda fase, no reactivar confianza: los aprobados —incluidos soft-deleted— ya quedaron pending y sin fingerprint/revisión vigente. Revisar el log, comparar el contador de auditoría con los productos afectados y reintentar la remoderación controlada; puede haber productos pending cuya versión detallada todavía no se incrementó.
-
-Al restaurar una tienda o producto después de una transición de tipo, confirmar que continúa sin confianza y pending; debe seguir el flujo normal de revisión, nunca recuperar la decisión antigua.
-
-Para garantizar que el cambio de usuario y sus efectos se reviertan juntos, la operación que llama `User::save()` debe envolverlo en `DB::transaction()`. Sin esa transacción exterior el comportamiento sigue siendo fail-closed en dos fases: scope/riesgo bloquean al no-vendor inmediatamente y después el servicio confirma la revocación/remoderación en su propia transacción.
-
-No modificar `users.user_type` con SQL directo, `User::query()->update()` ni `saveQuietly()`. Esas vías evitan observer, auditoría y remoderación. Mientras el tipo sea no-vendor las barreras de `published()` y riesgo lo rechazan, pero volver a vendor por la misma vía puede reexponer una aprobación antigua. Si ocurrió, desactivar confianza, reenviar productos mediante `SellerTypeRevalidationService` con el tipo anterior conocido y verificar manualmente auditoría/versiones antes de habilitar catálogo.
-
-Los cambios de email y KYC sí afectan evaluación/publicación, pero también deben motivar una revisión administrativa de confianza.
-
-### Respuesta idempotente
-
-Si el valor solicitado ya está guardado y la tienda sigue siendo elegible:
-
-- responde éxito con `changed = false`;
-- no crea auditoría;
-- no crea versión;
-- no despacha jobs adicionales.
-
-Excepción de seguridad: si se pide `enabled = true`, la base ya contiene true y la tienda dejó de ser elegible, no se acepta el no-op. El backend persiste primero la corrección —flag false, aprobados pending, decisión/fingerprint/riesgo limpios, auditoría admin y remoderación— y después responde 422 en `enabled`. La respuesta de error no significa que la revocación se haya revertido; recargar la tienda antes de reintentar.
-
-## Operación de la cola
-
-Jobs relevantes:
-
-| Job | Cuándo se despacha | Comportamiento de fallo |
-| --- | --- | --- |
-| `EvaluateProductForApproval` | Después de `submit()`/`markForReview()`. | Producto sigue pending. Reintenta 3 veces. |
-| `ReevaluateProductsAfterReferenceChange` | Update/delete de Brand, Category o Tag. | La referencia ya cambió, pero productos quedan en su estado anterior hasta reintento. |
-
-La segunda fila implica una ventana asíncrona: hasta que el worker ejecute el job, un producto previamente aprobado puede seguir cumpliendo `published()` con la referencia nueva.
-
-Una transición de `seller.user_type` no depende de un job para retirar publicación: revocación e invalidación ocurren sincrónicamente y sólo la evaluación de la nueva versión queda en cola.
-
-Comandos útiles:
-
-```bash
-./vendor/bin/sail artisan queue:work --queue=default --tries=3 --timeout=150
-./vendor/bin/sail artisan queue:restart
-./vendor/bin/sail artisan queue:failed
-```
-
-Antes de reintentar un fallo, leer excepción y payload. Reintentar uno específico:
-
-```bash
-./vendor/bin/sail artisan queue:retry <uuid-del-job>
-```
-
-`afterCommit()` evita que el worker observe una versión que todavía no fue confirmada en base de datos.
+La ejecución real bloquea Product e imagen, copia por stream al disco privado,
+compensa la copia si la transacción revierte y sólo después elimina la copia
+pública. El path de base de datos no cambia, por lo que no cambia por sí mismo
+el fingerprint de contenido. El comando es reentrante: si sólo existe la copia
+privada, no la vuelve a escribir.
+
+No abrir tráfico si **failed > 0**. Repetir el dry-run después de la ejecución:
+debe quedar sin errores. **Migrated: 0** en ese segundo dry-run es normal.
+
+El comando ignora archivos huérfanos sin fila en **product_images**. Inventariar
+los archivos planos restantes:
+
+~~~bash
+find public/uploads -maxdepth 1 -type f ! -name '.gitkeep' -print
+~~~
+
+No borrar a ciegas: clasificar cada huérfano y conservar
+**public/uploads/stores**. Ningún path referenciado por ProductImage debe seguir
+teniendo una copia directamente servible bajo public.
+
+Las imágenes se entregan por **product-media.show**. La ruta responde sólo si
+el Product está publicado o el solicitante es owner/admin autorizado y añade
+no-store y nosniff.
+
+## Backfill de hashes digitales
+
+Después de migrar schema y verificar el disco configurado:
+
+~~~bash
+php artisan products:backfill-file-hashes --batch=100
+~~~
+
+El comando incluye Products soft-deleted, abre cada objeto por stream, calcula
+SHA-256, actualiza tamaño y hash y manda el Product a revisión. No tiene modo
+dry-run. Captura errores por archivo y continúa; por ello su código de salida
+puede ser éxito aunque haya advertencias. Guardar stdout/stderr y comprobar:
+
+~~~sql
+SELECT id, product_id, path
+FROM product_files
+WHERE sha256 IS NULL
+ORDER BY product_id, id;
+~~~
+
+No abrir descargas ni considerar terminado el backfill mientras queden hashes
+nulos sin una excepción documentada. Si cambió el disco configurado, primero
+demostrar que todos los paths existen en ese mismo disco.
+
+## Reconciliación de elegibilidad
+
+Ejecución manual inicial:
+
+~~~bash
+php artisan security:reconcile-eligibility --chunk=200
+~~~
+
+El chunk se limita a 1–1000. El comando:
+
+- encuentra KYC approved cuyo expiry es anterior al día local;
+- incrementa su epoch una sola vez por fecha expirada;
+- guarda **expiration_reconciled_for**;
+- revoca trust y registra evento/auditoría;
+- detecta grants activos cuyo snapshot ya no es elegible y los revoca.
+
+**routes/console.php** lo programa hourly con **withoutOverlapping** y
+**onOneServer**. Producción debe ejecutar **php artisan schedule:run** cada
+minuto, o un **schedule:work** supervisado. En varias réplicas, CACHE_STORE debe
+ser compartido y soportar locks; un cache local por nodo rompe la garantía.
+
+La reconciliación es red de seguridad, no sustituto de observers. No detecta de
+forma fiable una secuencia ABA ejecutada enteramente con SQL directo.
+
+## Caches, workers y scheduler
+
+Después de cambiar código/env:
+
+~~~bash
+php artisan optimize:clear
+php artisan config:cache
+php artisan view:cache
+php artisan permission:cache-reset
+php artisan queue:restart
+~~~
+
+**queue:restart** sólo envía la señal por cache; no inicia procesos. El gestor
+Supervisor/systemd/Horizon debe arrancarlos de nuevo y mantenerlos vivos.
+Ejemplo de worker para el backend default:
+
+~~~bash
+php artisan queue:work --queue=default --tries=3 --timeout=150
+~~~
+
+Confirmar que usa la release nueva, procesa un job de prueba y respeta
+retry_after. Reiniciar también el proceso persistente de scheduler si se usa
+**schedule:work**.
+
+## Smoke tests antes de abrir tráfico
+
+1. Store pending sólo acepta approve/reject con versión actual.
+2. Una decisión stale devuelve 409 y no cambia Store.
+3. Suspend sólo acepta approved; restore sólo suspended.
+4. Store approved pero inactive no publica Products.
+5. KYC expira al día siguiente de su fecha local y revoca trust.
+6. Cambiar email/tipo/KYC rota epoch; volver al valor anterior no revive pins.
+7. Product aprobado con pin stale no aparece en home/listado/detalle.
+8. Imagen Product pública/owner/admin responde; no autorizada responde 404.
+9. No existe copia pública del medio Product migrado.
+10. Upload digital crea SHA-256 en el disco allowlisted y privado.
+11. Worker procesa evaluación y el scheduler registra reconciliaciones.
+
+Pruebas focalizadas disponibles, sin afirmar resultado por adelantado:
+
+~~~bash
+php artisan test tests/Feature/Security/StoreModerationTest.php
+php artisan test tests/Feature/Security/StoreProfileAtomicityTest.php
+php artisan test tests/Feature/Security/KycEligibilityEpochTest.php
+php artisan test tests/Feature/Security/KycExpirationReconciliationTest.php
+php artisan test tests/Feature/Security/ProductMediaAuthorizationTest.php
+php artisan test tests/Feature/Security/BackfillProductFileHashesTest.php
+php artisan test tests/Feature/Database/ModerationMigrationCompatibilityTest.php
+~~~
+
+Ejecutar además la suite completa del release y clasificar cualquier fallo como
+causado, expuesto o preexistente antes del go/no-go.
 
 ## Monitoreo
 
-### Productos pendientes antiguos
+### Cola y jobs
 
-```sql
-SELECT id, store_id, moderation_version, submitted_at,
-       risk_level, risk_score, moderation_reason
+~~~bash
+php artisan queue:failed
+~~~
+
+Alertar por jobs antiguos, crecimiento de **jobs**, fallos de
+**EvaluateProductForApproval**, **EvaluateProductApprovalContext** y
+**ReevaluateProductsAfterReferenceChange**, y ausencia de workers.
+
+### Moderación y elegibilidad
+
+~~~sql
+SELECT id, store_id, moderation_version, submitted_at, moderation_reason
 FROM products
 WHERE approved_status = 'pending'
-ORDER BY submitted_at ASC;
-```
+ORDER BY submitted_at;
 
-Una cola grande puede significar:
+SELECT id, product_id, version, event_type, occurred_at
+FROM product_moderation_events
+ORDER BY occurred_at DESC;
 
-- worker detenido;
-- tienda sin confianza;
-- producto digital;
-- producto incompleto o con riesgo;
-- job fallido;
-- versión/fingerprint cambiado antes de evaluar.
+SELECT id, user_id, trigger, user_epoch, kyc_epoch, eligible, occurred_at
+FROM seller_eligibility_events
+ORDER BY occurred_at DESC;
 
-### Historial por producto
+SELECT id, user_id, document_expiry_date, expiration_reconciled_for
+FROM kycs
+WHERE status = 'approved'
+  AND document_expiry_date < :today
+  AND (expiration_reconciled_for IS NULL
+       OR expiration_reconciled_for <> document_expiry_date);
 
-```sql
-SELECT product_id, version, status, source, risk_level,
-       risk_score, submitted_at, reviewed_at,
-       submission_reason, decision_reason
-FROM product_approval_reviews
-WHERE product_id = :product_id
-ORDER BY version DESC;
-```
+SELECT id, seller_id
+FROM stores
+WHERE auto_approve_products = 1
+  AND (
+    auto_approval_user_epoch IS NULL
+    OR auto_approval_kyc_id IS NULL
+    OR auto_approval_kyc_epoch IS NULL
+    OR auto_approval_store_epoch IS NULL
+    OR auto_approval_store_epoch <> eligibility_epoch
+  );
+~~~
 
-### Auditoría de tienda
+La última consulta es sólo un chequeo estructural parcial: detecta pins nulos y
+el epoch propio de Store, pero no compara los pins de User/KYC. La comprobación
+autoritativa es `SellerEligibilityService::storeSnapshot()` —que compara los
+cuatro pins— y el reconciliador; no use esa SQL aislada para declarar un grant
+vigente.
 
-```sql
-SELECT store_id, admin_id, previous_value, new_value,
-       reason, pending_products_resubmitted, ip_address, created_at
-FROM store_auto_approval_audits
-WHERE store_id = :store_id
-ORDER BY created_at DESC;
-```
+Usar para **:today** la fecha de **config('app.timezone')**, no asumir que
+CURRENT_DATE de la base comparte zona horaria.
 
-### Uso de almacenamiento digital
+### Storage
 
-```sql
-SELECT p.store_id,
-       COUNT(pf.id) AS files,
-       SUM(pf.size) AS bytes
-FROM product_files pf
-JOIN products p ON p.id = pf.product_id
-GROUP BY p.store_id
-ORDER BY bytes DESC;
-```
+- ejecutar periódicamente el dry-run de media y alertar por errores;
+- alertar por **product_files.sha256 IS NULL**;
+- monitorear uso de **storage/app/private**, chunks antiguos y bucket;
+- reconciliar objetos sin fila y filas sin objeto;
+- revisar que no reaparezcan copias Product bajo public.
 
-### Jobs fallidos
-
-```sql
-SELECT uuid, failed_at, exception
-FROM failed_jobs
-ORDER BY failed_at DESC;
-```
-
-## Smoke tests posteriores
-
-1. Vendor elegible crea un físico completo; queda pending y el job lo evalúa.
-2. Tienda sin confianza conserva el producto pending con razón.
-3. Admin activa confianza con razón y aparece auditoría.
-4. Físico completo de tienda confiable puede pasar a approved.
-5. Digital permanece pending.
-6. Vendor cambia un aprobado; sube versión y vuelve a pending.
-7. Admin intenta decidir desde una pestaña vieja; recibe 409.
-8. Home, listado y detalle muestran el aprobado elegible y devuelven 404 para un slug no publicable.
-9. Cambiar seller de `vendor` a otro tipo desactiva confianza, crea versión pending y retira el producto; volver a vendor no restaura confianza.
-10. Producto aprobado pero tienda suspendida no aparece en una consulta `published()`.
-11. Upload PDF válido termina en el disco `config('products.digital_upload.disk')` y el borrado (vendor/admin) elimina del mismo disco.
-12. Nombre `..` o metadata inconsistente recibe 422 y no crea carpeta insegura.
+No borrar chunks activos por edad sin respetar locks y metadata del upload; el
+repositorio aún no incluye un comando de limpieza de chunks.
 
 ## Troubleshooting
 
-### El vendor recibe 403 en productos
+### Product image devuelve 404
 
-Comprobar:
+Comprobar, en orden:
 
-- `user_type = vendor`;
-- email verificado;
-- KYC `approved`;
-- tienda existente;
-- tienda `draft`, `pending` o `approved`;
-- `suspended_at IS NULL`;
-- ownership del producto.
+1. autorización: Product publicado, owner o admin con Product Management;
+2. fila ProductImage y asociación actual al Product;
+3. config cache y valores PRODUCT_MEDIA_DISK/PRODUCT_MEDIA_ALLOWED_DISKS;
+4. disco private, fail-fast y root existente;
+5. objeto presente con el mismo path;
+6. MIME permitido.
 
-Después de cambiar email, perder acceso hasta verificar el nuevo correo es comportamiento esperado.
+No restaurar la disponibilidad copiando el archivo a public.
 
-### El admin no ve la tarjeta de autoaprobación
+### El migrador de media falla
 
-Comprobar:
+- **Neither ... exists**: restaurar desde backup o corregir el objeto faltante;
+- MIME no permitido: poner el registro en cuarentena y revisar el contenido;
+- fallo al borrar public: mantener mantenimiento, corregir permisos y repetir;
+- disco no allowlisted/private: corregir config, limpiar cache y reintentar.
 
-- el producto tiene tienda;
-- el admin tiene `Store Auto-Approval Management`;
-- el permiso usa guard `admin`;
-- cache de Spatie limpia.
+### Un Product aprobado no aparece
 
-```bash
-./vendor/bin/sail artisan permission:cache-reset
-```
+Verificar estado active, tipo physical/digital conocido, versión revisada,
+policy version, Store approved/active/no suspendida, seller vendor/verificado,
+KYC vigente y todos los pins de epochs. **approved_status** por sí solo no es
+evidencia de publicación.
 
-### La activación de confianza devuelve 422
+### Trust no se puede habilitar
 
-La tienda debe estar activa, no suspendida, tener seller vendor, email verificado y KYC aprobado. La razón debe tener al menos 10 caracteres.
+La Store debe estar approved, active, con revisión vigente, no suspendida y con
+seller/KYC elegibles. El grant anterior puede haberse revocado antes de
+devolver 422; recargar la Store y revisar la auditoría.
 
-### Un producto permanece pending
+### KYC parece expirar un día antes/después
 
-Revisar en este orden:
+Comparar el valor efectivo de **config('app.timezone')**, la fecha persistida y
+el día calculado por **SellerEligibilityService::today()**. La fecha almacenada
+es inclusiva. Reiniciar procesos persistentes después de cambiar la
+configuración de timezone o su cache.
 
-1. worker activo;
-2. `failed_jobs`;
-3. interruptor global;
-4. confianza de tienda;
-5. `risk_reasons` de la revisión;
-6. tipo digital;
-7. imagen, categoría y precio vendible;
-8. precios/stock de variantes;
-9. versión y fingerprint.
+### Hash backfill terminó pero quedan nulos
 
-### Producto aprobado no aparece en el catálogo
+El comando continúa tras errores individuales. Revisar warnings, existencia y
+permisos del objeto en PRODUCT_DIGITAL_UPLOAD_DISK y repetir sólo después de
+corregir la causa.
 
-Comprobar todas las condiciones de `published()`:
+### Decisión admin no se aplica
 
-- producto activo;
-- versión revisada igual a versión actual;
-- tienda activa y no suspendida;
-- seller con `user_type = vendor`;
-- email verificado;
-- KYC aprobado.
+Una versión stale devuelve 409. Una transición inválida produce conflicto de
+dominio: reject/suspend propagan 409, mientras approve/restore muestran alerta
+y redirect en la UI actual. En todos los casos, recargar y no alterar
+**moderation_version** manualmente.
 
-En las rutas actuales, confirmar que la petición llega a `HomeController` o `ProductCatalogController`. En cualquier consumidor nuevo, confirmar además que la propia consulta llama `published()`.
+## Rollback y contención
 
-### El admin recibe 409 al guardar
+No usar **migrate:rollback --step=N** a ciegas: un batch puede incluir
+migraciones ajenas y los down no reconstruyen datos. Un rollback completo
+requiere:
 
-La versión cambió desde que abrió el formulario. Recargar, revisar el contenido nuevo y volver a decidir. No se debe forzar la versión desde DevTools.
+1. mantenimiento y workers detenidos;
+2. batch exacto identificado;
+3. código compatible con el schema restaurado;
+4. restore de base para recuperar estados, slugs, pins e historiales;
+5. restore coordinado de storage público/privado;
+6. caches reconstruidos;
+7. smoke tests antes de tráfico.
 
-### Upload digital devuelve 422
+El migrador de media elimina copias públicas; bajar código no las recrea.
+Restaurar sólo base sin storage deja referencias rotas, y restaurar sólo
+storage puede reexponer archivos.
 
-Comprobar:
+Como contención lógica, sin bajar schema:
 
-- nombre y extensión declarada;
-- UUID;
-- índice, offset, conteo y tamaños;
-- tamaño real del chunk;
-- cuota de producto/tienda/uploader;
-- MIME final permitido.
+~~~dotenv
+PRODUCT_AUTOMATIC_APPROVAL_ENABLED=false
+~~~
 
-Un 429 corresponde al throttle de la ruta.
-
-### Error de variantes
-
-Revisar grupos, valores y combinaciones contra `config/products.php`. La operación inválida se revierte; no aumentar límites sin medir memoria, CPU y tamaño de tabla.
-
-### Error de slug duplicado
-
-Buscar incluyendo soft-deleted. La validación responde antes en el caso normal; una colisión concurrente puede llegar desde el índice único.
-
-## Rollback
-
-No tratar estas migraciones como completamente reversibles a nivel de datos:
-
-- productos legacy no recuperan automáticamente `approved`;
-- slugs renombrados no recuperan el valor anterior;
-- eliminar tablas borra historial y auditoría.
-
-Procedimiento seguro:
-
-1. poner la aplicación en mantenimiento;
-2. detener workers;
-3. identificar batch exacto con `migrate:status` y la tabla `migrations`;
-4. restaurar código compatible;
-5. restaurar backup de base de datos si se necesita recuperar estados/slugs/historial;
-6. restaurar storage si el incidente involucra archivos;
-7. limpiar caches;
-8. reiniciar workers y validar antes de levantar mantenimiento.
-
-No ejecutar un rollback ciego por cantidad de pasos si el batch contiene migraciones ajenas.
-
-En el entorno inspeccionado las migraciones aparecen en el mismo batch inicial, por lo que un rollback genérico podría afectar mucho más que este módulo. El rollback lógico preferido es:
-
-1. establecer `PRODUCT_AUTOMATIC_APPROVAL_ENABLED=false`;
-2. reconstruir config cache;
-3. reiniciar workers;
-4. desactivar confianza por tienda mediante una acción auditada cuando sea necesario;
-5. conservar tablas, snapshots e historial mientras se investiga.
-
-## Mantenimiento futuro
-
-- Crear comando programado para reconciliar archivos y limpiar chunks sin actividad.
-- Crear un reconciliador periódico de elegibilidad que detecte confianza/aprobaciones obsoletas cuando SQL masivo, `query()->update()`, `saveQuietly()` o eventos deshabilitados hayan omitido observers.
-- Añadir malware scanning antes de distribuir archivos.
-- Aplicar `published()` y una regresión HTTP a cada nuevo consumidor público.
-- Revisar `failed_jobs` y productos pendientes antiguos con alertas.
-- Conservar auditorías de confianza según la política de retención.
-- Ejecutar pruebas de seguridad después de cambios de catálogo, storage, KYC o permisos.
-
-## Store & Product Moderation Refactor
-
-See `docs/refactor-implementation.md` for the complete implementation record:
-versioned Store moderation, Product content/eligibility separation, KYC/email
-revalidation, synchronous reference invalidation, digital file hashes, and
-soft-delete safety.
-
+Después ejecutar **config:cache**, **queue:restart** y verificar workers. Esto
+detiene nuevas autoaprobaciones, pero no sustituye una investigación ni corrige
+datos ya inconsistentes.

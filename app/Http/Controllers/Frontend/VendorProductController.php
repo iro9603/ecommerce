@@ -16,9 +16,11 @@ use App\Models\ProductVariant;
 use App\Models\Tag;
 use App\Services\AlertService;
 use App\Services\ProductContentSanitizer;
+use App\Services\ProductMediaStorageService;
 use App\Services\ProductModerationService;
-use App\Traits\FileUploadTrait;
+use App\Services\ProductSlugConflictDetector;
 use Illuminate\Contracts\View\View;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -28,8 +30,6 @@ use Illuminate\Validation\ValidationException;
 
 class VendorProductController extends Controller
 {
-    use FileUploadTrait;
-
     public function index(): View|RedirectResponse
     {
         Gate::authorize('viewAny', Product::class);
@@ -58,12 +58,14 @@ class VendorProductController extends Controller
     public function store(
         ProductStoreRequest $request,
         string $type,
-        ProductModerationService $moderation
+        ProductModerationService $moderation,
+        ProductSlugConflictDetector $slugConflicts,
     ) {
         abort_unless(in_array($type, ['physical', 'digital'], true), 404);
         Gate::authorize('create', Product::class);
 
-        $product = DB::transaction(function () use ($request, $type, $moderation) {
+        try {
+            $product = DB::transaction(function () use ($request, $type, $moderation) {
 
             $product = new Product;
             $product->product_type = $type;
@@ -97,7 +99,16 @@ class VendorProductController extends Controller
             );
 
             return $product;
-        });
+            });
+        } catch (QueryException $exception) {
+            if (! $slugConflicts->causedByProductSlug($exception)) {
+                throw $exception;
+            }
+
+            throw ValidationException::withMessages([
+                'slug' => 'The product slug has already been taken.',
+            ]);
+        }
 
         if ($type == 'physical') {
             return response()->json([
@@ -160,7 +171,8 @@ class VendorProductController extends Controller
     public function uploadImages(
         Request $request,
         Product $product,
-        ProductModerationService $moderation
+        ProductModerationService $moderation,
+        ProductMediaStorageService $mediaStorage,
     ) {
         Gate::authorize('uploadImages', $product);
 
@@ -168,8 +180,7 @@ class VendorProductController extends Controller
             'image' => ['required', 'image', 'max:3048'],
         ]);
 
-        $filePath = $this->uploadFile($request->file('image'));
-        abort_if($filePath === null, 422, 'The image could not be stored.');
+        $filePath = $mediaStorage->store($request->file('image'));
 
         try {
             $productImage = DB::transaction(function () use (
@@ -197,7 +208,7 @@ class VendorProductController extends Controller
                 return $productImage;
             });
         } catch (\Throwable $exception) {
-            $this->deleteFile($filePath);
+            $mediaStorage->delete($filePath);
 
             throw $exception;
         }
@@ -205,12 +216,16 @@ class VendorProductController extends Controller
         return response()->json([
             'status' => 'success',
             'id' => $productImage->id,
-            'path' => asset($filePath),
+            'path' => $productImage->controlledUrl(),
             'message' => 'Image uploaded successfully.',
         ]);
     }
 
-    public function destroyImage(ProductImage $image, ProductModerationService $moderation)
+    public function destroyImage(
+        ProductImage $image,
+        ProductModerationService $moderation,
+        ProductMediaStorageService $mediaStorage,
+    )
     {
         $initialProduct = Product::query()->findOrFail($image->product_id);
         Gate::authorize('uploadImages', $initialProduct);
@@ -238,7 +253,7 @@ class VendorProductController extends Controller
 
             return $imagePath;
         });
-        $this->deleteFile($imagePath);
+        $mediaStorage->delete($imagePath);
 
         return response()->json(['status' => 'success', 'message' => 'Image deleted successfully.']);
     }
@@ -295,13 +310,15 @@ class VendorProductController extends Controller
     public function update(
         ProductUpdateRequest $request,
         Product $product,
-        ProductModerationService $moderation
+        ProductModerationService $moderation,
+        ProductSlugConflictDetector $slugConflicts,
     ) {
-        DB::transaction(function () use (
-            $request,
-            $product,
-            $moderation
-        ): void {
+        try {
+            DB::transaction(function () use (
+                $request,
+                $product,
+                $moderation
+            ): void {
             $product = $this->lockProductForMutation($product, 'update');
             $originalCategoryIds = $product->categories()
                 ->pluck('categories.id')
@@ -377,7 +394,16 @@ class VendorProductController extends Controller
                     'Material product details changed by vendor.',
                 );
             }
-        });
+            });
+        } catch (QueryException $exception) {
+            if (! $slugConflicts->causedByProductSlug($exception)) {
+                throw $exception;
+            }
+
+            throw ValidationException::withMessages([
+                'slug' => 'The product slug has already been taken.',
+            ]);
+        }
 
         AlertService::created();
 
@@ -415,13 +441,18 @@ class VendorProductController extends Controller
             $isUpdate = filled($attributeId);
 
             if ($isUpdate) {
-                $belongsToProduct = DB::table('product_attribute_values')
+                $attribute = Attribute::query()
+                    ->whereKey($attributeId)
+                    ->lockForUpdate()
+                    ->firstOrFail();
+                $association = DB::table('product_attribute_values')
                     ->where('product_id', $product->id)
                     ->where('attribute_id', $attributeId)
-                    ->exists();
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->first(['id']);
 
-                abort_unless($belongsToProduct, 404);
-                $attribute = Attribute::findOrFail($attributeId);
+                abort_if($association === null, 404);
                 $this->assertAttributeIsNotSharedWithAnotherProduct($attribute, $product);
             } else {
                 $attribute = new Attribute;
@@ -481,19 +512,22 @@ class VendorProductController extends Controller
             $valueId = $valueIds[$index] ?? null;
 
             if ($valueId) {
-                $belongsToProduct = DB::table('product_attribute_values')
+                $association = DB::table('product_attribute_values')
                     ->where('product_id', $product->id)
                     ->where('attribute_id', $attribute->id)
                     ->where('attribute_value_id', $valueId)
-                    ->exists();
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->first(['id']);
 
-                abort_unless($belongsToProduct, 404);
-                $this->assertAttributeValueIsNotSharedWithAnotherProduct((int) $valueId, $product);
+                abort_if($association === null, 404);
 
                 $attributeValue = AttributeValue::query()
                     ->whereKey($valueId)
                     ->where('attribute_id', $attribute->id)
+                    ->lockForUpdate()
                     ->firstOrFail();
+                $this->assertAttributeValueIsNotSharedWithAnotherProduct((int) $valueId, $product);
             } else {
                 $attributeValue = new AttributeValue;
                 $attributeValue->attribute_id = $attribute->id;
@@ -518,6 +552,8 @@ class VendorProductController extends Controller
         $removedValueIds = DB::table('product_attribute_values')
             ->where('product_id', $product->id)
             ->where('attribute_id', $attribute->id)
+            ->orderBy('id')
+            ->lockForUpdate()
             ->pluck('attribute_value_id')
             ->diff($savedValueIds);
 
@@ -528,9 +564,15 @@ class VendorProductController extends Controller
                 ->whereIn('attribute_value_id', $removedValueIds)
                 ->delete();
 
-            AttributeValue::query()
+            $orphanedValueIds = AttributeValue::query()
                 ->whereIn('id', $removedValueIds)
                 ->whereNotIn('id', DB::table('product_attribute_values')->select('attribute_value_id'))
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->pluck('id');
+
+            AttributeValue::query()
+                ->whereIn('id', $orphanedValueIds)
                 ->delete();
         }
 
@@ -541,13 +583,15 @@ class VendorProductController extends Controller
         Attribute $attribute,
         Product $product
     ): void {
-        $isSharedWithAnotherProduct = DB::table('product_attribute_values as product_values')
+        $sharedAssociation = DB::table('product_attribute_values as product_values')
             ->where('product_values.attribute_id', $attribute->getKey())
             ->where('product_values.product_id', '!=', $product->getKey())
-            ->exists();
+            ->orderBy('product_values.id')
+            ->lockForUpdate()
+            ->first(['product_values.id']);
 
         abort_if(
-            $isSharedWithAnotherProduct,
+            $sharedAssociation !== null,
             403,
             'This attribute is shared with another product and cannot be edited.'
         );
@@ -557,13 +601,15 @@ class VendorProductController extends Controller
         int $attributeValueId,
         Product $product
     ): void {
-        $isSharedWithAnotherProduct = DB::table('product_attribute_values as product_values')
+        $sharedAssociation = DB::table('product_attribute_values as product_values')
             ->where('product_values.attribute_value_id', $attributeValueId)
             ->where('product_values.product_id', '!=', $product->getKey())
-            ->exists();
+            ->orderBy('product_values.id')
+            ->lockForUpdate()
+            ->first(['product_values.id']);
 
         abort_if(
-            $isSharedWithAnotherProduct,
+            $sharedAssociation !== null,
             403,
             'This attribute value is shared with another product and cannot be edited.'
         );
@@ -584,12 +630,14 @@ class VendorProductController extends Controller
                 ->firstOrFail();
 
             // Elimina todos los valores asociados en la tabla pivot para este producto y atributo
-            $belongsToProduct = DB::table('product_attribute_values')
+            $association = DB::table('product_attribute_values')
                 ->where('product_id', $product->id)
                 ->where('attribute_id', $attribute->id)
-                ->exists();
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->first(['id']);
 
-            abort_unless($belongsToProduct, 404);
+            abort_if($association === null, 404);
 
             DB::table('product_attribute_values')
                 ->where('product_id', $product->id)
@@ -597,13 +645,22 @@ class VendorProductController extends Controller
                 ->delete();
 
             // (Opcional) Si el atributo ya no está asociado a ningún producto, elimínalo por completo
-            $isUsedElsewhere = DB::table('product_attribute_values')
+            $otherAssociation = DB::table('product_attribute_values')
                 ->where('attribute_id', $attribute->id)
-                ->exists();
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->first(['id']);
 
-            if (! $isUsedElsewhere) {
+            if ($otherAssociation === null) {
                 // Primero borra sus valores
-                AttributeValue::where('attribute_id', $attribute->id)->delete();
+                $attributeValues = AttributeValue::query()
+                    ->where('attribute_id', $attribute->id)
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->get();
+                AttributeValue::query()
+                    ->whereIn('id', $attributeValues->modelKeys())
+                    ->delete();
                 // Luego borra el atributo
                 $attribute->delete();
             }
@@ -778,7 +835,17 @@ class VendorProductController extends Controller
     {
         Gate::authorize('manageVariants', $product);
 
-        foreach ($product->variants as $variant) {
+        $variants = $product->variants()
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($variants as $variant) {
+            DB::table('product_variant_attribute_value')
+                ->where('product_variant_id', $variant->id)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get(['id']);
             DB::table('product_variant_attribute_value')
                 ->where('product_variant_id', $variant->id)
                 ->delete();
@@ -793,12 +860,19 @@ class VendorProductController extends Controller
 
         $groupedAttributes = DB::table('product_attribute_values')
             ->where('product_id', $product->id)
-            ->get()->groupBy('attribute_id');
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get()
+            ->groupBy('attribute_id');
 
         $attributeGroups = collect();
 
         foreach ($groupedAttributes as $attributeId => $items) {
-            $attributeValues = AttributeValue::whereIn('id', $items->pluck('attribute_value_id'))->get();
+            $attributeValues = AttributeValue::query()
+                ->whereIn('id', $items->pluck('attribute_value_id'))
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
             $attributeGroups->push($attributeValues);
         }
 

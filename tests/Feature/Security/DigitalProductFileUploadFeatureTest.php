@@ -1,13 +1,43 @@
 <?php
 
+use App\Models\Product;
+use App\Models\ProductApprovalReview;
 use App\Models\ProductFile;
 use App\Services\DigitalProductFileUploadService;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Tests\Support\ProductSecurityFixtures;
+
+function finalizeDigitalSecurityUpload(
+    Product $product,
+    mixed $submittedBy,
+    string $contents,
+    string $name,
+): ProductFile {
+    $uuid = Str::uuid()->toString();
+    $uploaderKey = 'security-test:'.$submittedBy->getKey();
+    $result = app(DigitalProductFileUploadService::class)->storeChunk(
+        $product,
+        UploadedFile::fake()->createWithContent('chunk.part', $contents),
+        [
+            'uuid' => $uuid,
+            'index' => 0,
+            'total_chunks' => 1,
+            'total_size' => strlen($contents),
+            'original_name' => $name,
+        ],
+        $uploaderKey,
+        static fn (Product $lockedProduct) => null,
+        $submittedBy,
+        'Digital security regression upload.',
+    );
+
+    return $result['product_file'];
+}
 
 test('a valid single chunk PDF is assembled stored and recorded safely', function () {
     $disk = (string) config('products.digital_upload.disk', 'local');
@@ -26,7 +56,7 @@ test('a valid single chunk PDF is assembled stored and recorded safely', functio
     $chunkFolder = storage_path('app/private/chunks/'.$uploadKey);
 
     try {
-        $result = (new DigitalProductFileUploadService)->storeChunk(
+        $result = app(DigitalProductFileUploadService::class)->storeChunk(
             $product,
             UploadedFile::fake()->createWithContent('chunk.part', $pdf),
             [
@@ -36,7 +66,10 @@ test('a valid single chunk PDF is assembled stored and recorded safely', functio
                 'total_size' => strlen($pdf),
                 'original_name' => 'vendor-manual.pdf',
             ],
-            $uploaderKey
+            $uploaderKey,
+            static fn (\App\Models\Product $lockedProduct) => null,
+            $vendor['user'],
+            'Direct upload test moderation.',
         );
 
         $productFile = $result['product_file'] ?? null;
@@ -62,6 +95,9 @@ test('a valid single chunk PDF is assembled stored and recorded safely', functio
             'extension' => 'pdf',
             'sha256' => hash('sha256', $pdf),
         ]);
+        expect($product->fresh()->approved_status)->toBe('pending')
+            ->and($product->fresh()->moderation_version)->toBe(1)
+            ->and($product->fresh()->reviewed_version)->toBeNull();
     } finally {
         File::deleteDirectory($chunkFolder);
     }
@@ -87,7 +123,7 @@ test('a persistent product file quota is enforced before accepting chunks', func
     $chunkFolder = storage_path('app/private/chunks/'.$uploadKey);
 
     try {
-        expect(fn () => (new DigitalProductFileUploadService)->storeChunk(
+        expect(fn () => app(DigitalProductFileUploadService::class)->storeChunk(
             $product,
             UploadedFile::fake()->createWithContent('chunk.part', '%PDF-test'),
             [
@@ -114,7 +150,7 @@ test('incomplete upload quotas are isolated by uploader and stale uploads are pr
     $product = ProductSecurityFixtures::product($vendor['store'], [
         'product_type' => 'digital',
     ]);
-    $service = new DigitalProductFileUploadService;
+    $service = app(DigitalProductFileUploadService::class);
     $firstUuid = Str::uuid()->toString();
     $secondUuid = Str::uuid()->toString();
     $otherUuid = Str::uuid()->toString();
@@ -175,5 +211,143 @@ test('incomplete upload quotas are isolated by uploader and stale uploads are pr
         foreach ($folders as $folder) {
             File::deleteDirectory($folder);
         }
+    }
+});
+
+test('a moderation failure rolls back ProductFile metadata and removes physical bytes', function () {
+    $disk = (string) config('products.digital_upload.disk');
+    Storage::fake($disk);
+    $vendor = ProductSecurityFixtures::vendor();
+    $product = ProductSecurityFixtures::product($vendor['store'], [
+        'product_type' => 'digital',
+        'approved_status' => Product::APPROVAL_APPROVED,
+        'moderation_version' => 1,
+        'reviewed_version' => 1,
+        'approved_at' => now(),
+    ]);
+    $event = 'eloquent.creating: '.ProductApprovalReview::class;
+    Event::listen($event, static function (): never {
+        throw new RuntimeException('Injected Product moderation failure.');
+    });
+
+    try {
+        expect(fn () => finalizeDigitalSecurityUpload(
+            $product,
+            $vendor['user'],
+            '%PDF-rollback-file',
+            'rollback.pdf',
+        ))->toThrow(RuntimeException::class, 'Injected Product moderation failure.');
+    } finally {
+        Event::forget($event);
+    }
+
+    $current = Product::query()->findOrFail($product->getKey());
+
+    expect(ProductFile::query()->where('product_id', $product->getKey())->count())->toBe(0)
+        ->and(Storage::disk($disk)->allFiles())->toBe([])
+        ->and($current->approved_status)->toBe(Product::APPROVAL_APPROVED)
+        ->and($current->moderation_version)->toBe(1)
+        ->and($current->reviewed_version)->toBe(1);
+});
+
+test('different file bytes produce immutable paths hashes and moderation versions', function () {
+    $disk = (string) config('products.digital_upload.disk');
+    Storage::fake($disk);
+    $vendor = ProductSecurityFixtures::vendor();
+    $product = ProductSecurityFixtures::product($vendor['store'], [
+        'product_type' => 'digital',
+    ]);
+    $bytesA = '%PDF-file-identity-A';
+    $bytesB = '%PDF-file-identity-B';
+
+    $fileA = finalizeDigitalSecurityUpload($product, $vendor['user'], $bytesA, 'a.pdf');
+    $fileB = finalizeDigitalSecurityUpload($product->fresh(), $vendor['user'], $bytesB, 'b.pdf');
+    $reviews = ProductApprovalReview::query()
+        ->where('product_id', $product->getKey())
+        ->orderBy('version')
+        ->get();
+
+    expect($fileA->path)->not->toBe($fileB->path)
+        ->and($fileA->sha256)->toBe(hash('sha256', $bytesA))
+        ->and($fileB->sha256)->toBe(hash('sha256', $bytesB))
+        ->and($fileA->sha256)->not->toBe($fileB->sha256)
+        ->and($product->fresh()->moderation_version)->toBe(2)
+        ->and($reviews)->toHaveCount(2)
+        ->and(collect($reviews[0]->snapshot['files'])->pluck('sha256')->all())
+        ->toBe([$fileA->sha256])
+        ->and(collect($reviews[1]->snapshot['files'])->pluck('sha256')->all())
+        ->toBe([$fileA->sha256, $fileB->sha256]);
+});
+
+test('two uploads that pass initial Store quota preflight cannot both finalize', function () {
+    $disk = (string) config('products.digital_upload.disk');
+    Storage::fake($disk);
+    config()->set('products.digital_upload.max_total_size_per_store_kb', 1);
+    config()->set('products.digital_upload.max_total_size_per_product_kb', 2);
+    $vendor = ProductSecurityFixtures::vendor();
+    $productA = ProductSecurityFixtures::product($vendor['store'], ['product_type' => 'digital']);
+    $productB = ProductSecurityFixtures::product($vendor['store'], ['product_type' => 'digital']);
+    $service = app(DigitalProductFileUploadService::class);
+    $uuidA = Str::uuid()->toString();
+    $uuidB = Str::uuid()->toString();
+    $keyA = 'quota-a:'.$vendor['user']->getKey();
+    $keyB = 'quota-b:'.$vendor['user']->getKey();
+    $first = '%PDF-'.str_repeat('A', 345);
+    $secondA = str_repeat('A', 350);
+    $secondB = str_repeat('B', 350);
+    $metadata = static fn (string $uuid, string $name): array => [
+        'uuid' => $uuid,
+        'index' => 0,
+        'total_chunks' => 2,
+        'total_size' => 700,
+        'original_name' => $name,
+    ];
+    $chunkRoot = storage_path('app/private/chunks');
+    $folderA = $chunkRoot.'/'.hash('sha256', implode('|', [$keyA, $productA->getKey(), $uuidA]));
+    $folderB = $chunkRoot.'/'.hash('sha256', implode('|', [$keyB, $productB->getKey(), $uuidB]));
+
+    try {
+        expect($service->storeChunk(
+            $productA,
+            UploadedFile::fake()->createWithContent('a-0.part', $first),
+            $metadata($uuidA, 'a.pdf'),
+            $keyA,
+        )['complete'])->toBeFalse();
+        expect($service->storeChunk(
+            $productB,
+            UploadedFile::fake()->createWithContent('b-0.part', $first),
+            $metadata($uuidB, 'b.pdf'),
+            $keyB,
+        )['complete'])->toBeFalse();
+
+        $completeA = $metadata($uuidA, 'a.pdf');
+        $completeA['index'] = 1;
+        expect($service->storeChunk(
+            $productA,
+            UploadedFile::fake()->createWithContent('a-1.part', $secondA),
+            $completeA,
+            $keyA,
+            static fn (Product $lockedProduct) => null,
+            $vendor['user'],
+            'Quota test A.',
+        )['complete'])->toBeTrue();
+
+        $completeB = $metadata($uuidB, 'b.pdf');
+        $completeB['index'] = 1;
+        expect(fn () => $service->storeChunk(
+            $productB,
+            UploadedFile::fake()->createWithContent('b-1.part', $secondB),
+            $completeB,
+            $keyB,
+            static fn (Product $lockedProduct) => null,
+            $vendor['user'],
+            'Quota test B.',
+        ))->toThrow(ValidationException::class);
+
+        expect(ProductFile::query()->count())->toBe(1)
+            ->and((int) ProductFile::query()->sum('size'))->toBe(700);
+    } finally {
+        File::deleteDirectory($folderA);
+        File::deleteDirectory($folderB);
     }
 });

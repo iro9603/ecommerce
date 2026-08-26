@@ -5,11 +5,13 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\StoreAutoApprovalRequest;
 use App\Models\Admin;
+use App\Models\Kyc;
 use App\Models\Product;
 use App\Models\Store;
 use App\Models\StoreAutoApprovalAudit;
 use App\Models\User;
 use App\Services\ProductModerationService;
+use App\Services\SellerEligibilityService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
@@ -28,6 +30,7 @@ class StoreAutoApprovalController extends Controller implements HasMiddleware
         StoreAutoApprovalRequest $request,
         Store $store,
         ProductModerationService $moderation,
+        SellerEligibilityService $eligibilityService,
     ): JsonResponse {
         $admin = Auth::guard('admin')->user();
         abort_unless($admin instanceof Admin, 401);
@@ -36,6 +39,7 @@ class StoreAutoApprovalController extends Controller implements HasMiddleware
             $request,
             $store,
             $moderation,
+            $eligibilityService,
             $admin
         ): array {
             $storeReference = Store::query()
@@ -60,41 +64,33 @@ class StoreAutoApprovalController extends Controller implements HasMiddleware
                 ]);
             }
 
-            $lockedStore->load(['seller.kyc']);
+            $lockedSeller = $lockedStore->seller_id === null
+                ? null
+                : User::query()->whereKey($lockedStore->seller_id)->first();
+            $lockedKyc = $lockedSeller === null
+                ? null
+                : Kyc::query()
+                    ->where('user_id', $lockedSeller->getKey())
+                    ->lockForUpdate()
+                    ->first();
+            $lockedSeller?->setRelation('kyc', $lockedKyc);
+            $lockedStore->setRelation('seller', $lockedSeller);
             $enabled = $request->boolean('enabled');
             $previous = (bool) $lockedStore->auto_approve_products;
-            $eligibility = $this->eligibilitySnapshot($lockedStore);
+            $eligibility = $eligibilityService->storeSnapshot($lockedStore);
             $reason = trim((string) $request->validated('reason'));
 
             if ($enabled && ! $eligibility['eligible']) {
                 if ($previous) {
                     $failClosedReason = 'Automatic fail-closed trust revocation: '.$reason;
-                    $lockedStore->forceFill(['auto_approve_products' => false])->save();
-                    $productIds = Product::withTrashed()
-                        ->where('store_id', $lockedStore->getKey())
-                        ->whereIn('approved_status', [
-                            Product::APPROVAL_APPROVED,
-                            Product::APPROVAL_PENDING,
-                        ])
-                        ->orderBy('id')
-                        ->pluck('id')
-                        ->map(fn ($id): int => (int) $id)
-                        ->all();
-
-                    Product::withTrashed()
-                        ->whereIn('id', $productIds)
-                        ->where('approved_status', Product::APPROVAL_APPROVED)
-                        ->update([
-                            'approved_status' => Product::APPROVAL_PENDING,
-                            'reviewed_version' => null,
-                            'approved_at' => null,
-                            'approved_by' => null,
-                            'moderation_reason' => $failClosedReason,
-                            'moderation_fingerprint' => null,
-                            'risk_level' => null,
-                            'risk_score' => null,
-                            'updated_at' => now(),
-                        ]);
+                    $lockedStore->forceFill([
+                        'auto_approve_products' => false,
+                        'eligibility_epoch' => ((int) $lockedStore->eligibility_epoch) + 1,
+                        'auto_approval_user_epoch' => null,
+                        'auto_approval_kyc_id' => null,
+                        'auto_approval_kyc_epoch' => null,
+                        'auto_approval_store_epoch' => null,
+                    ])->save();
 
                     $audit = StoreAutoApprovalAudit::query()->create([
                         'store_id' => $lockedStore->getKey(),
@@ -114,7 +110,6 @@ class StoreAutoApprovalController extends Controller implements HasMiddleware
                         'resubmitted_products' => 0,
                         'ineligible_request' => true,
                         'remoderation_audit_id' => $audit->getKey(),
-                        'remoderation_product_ids' => $productIds,
                         'remoderation_reason' => $failClosedReason,
                     ];
                 }
@@ -132,7 +127,19 @@ class StoreAutoApprovalController extends Controller implements HasMiddleware
                 ];
             }
 
-            $lockedStore->forceFill(['auto_approve_products' => $enabled])->save();
+            $nextStoreEpoch = ((int) $lockedStore->eligibility_epoch) + 1;
+            $lockedStore->forceFill([
+                'auto_approve_products' => $enabled,
+                'eligibility_epoch' => $nextStoreEpoch,
+                'auto_approval_user_epoch' => $enabled
+                    ? $eligibility['seller_eligibility_epoch']
+                    : null,
+                'auto_approval_kyc_id' => $enabled ? $eligibility['kyc_id'] : null,
+                'auto_approval_kyc_epoch' => $enabled
+                    ? $eligibility['kyc_eligibility_epoch']
+                    : null,
+                'auto_approval_store_epoch' => $enabled ? $nextStoreEpoch : null,
+            ])->save();
 
             $audit = StoreAutoApprovalAudit::query()->create([
                 'store_id' => $lockedStore->getKey(),
@@ -157,25 +164,6 @@ class StoreAutoApprovalController extends Controller implements HasMiddleware
         }, 5);
 
         if ($result['ineligible_request'] ?? false) {
-            foreach ($result['remoderation_product_ids'] as $productId) {
-                $product = Product::withTrashed()->find($productId);
-
-                if (
-                    ! $product
-                    || ! in_array($product->approved_status, [
-                        Product::APPROVAL_APPROVED,
-                        Product::APPROVAL_PENDING,
-                    ], true)
-                ) {
-                    continue;
-                }
-
-                $moderation->forceRevalidate($product, null, $result['remoderation_reason']);
-                StoreAutoApprovalAudit::query()
-                    ->whereKey($result['remoderation_audit_id'])
-                    ->increment('pending_products_resubmitted');
-            }
-
             throw ValidationException::withMessages([
                 'enabled' => 'Automatic approval was revoked because the store is no longer eligible. Review its seller and security status before enabling it again.',
             ]);
@@ -203,28 +191,4 @@ class StoreAutoApprovalController extends Controller implements HasMiddleware
         ]);
     }
 
-    /**
-     * @return array<string, bool|string|null>
-     */
-    private function eligibilitySnapshot(Store $store): array
-    {
-        $seller = $store->seller;
-
-        $snapshot = [
-            'store_status' => $store->status,
-            'store_not_suspended' => $store->suspended_at === null,
-            'seller_user_type' => $seller?->user_type,
-            'seller_is_vendor' => $seller?->user_type === 'vendor',
-            'seller_email_verified' => $seller?->email_verified_at !== null,
-            'kyc_status' => $seller?->kyc?->status,
-        ];
-
-        $snapshot['eligible'] = $snapshot['store_status'] === 'approved'
-            && $snapshot['store_not_suspended']
-            && $snapshot['seller_is_vendor']
-            && $snapshot['seller_email_verified']
-            && $snapshot['kyc_status'] === 'approved';
-
-        return $snapshot;
-    }
 }

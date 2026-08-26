@@ -2,366 +2,310 @@
 
 [Volver al índice del módulo](README.md)
 
-## Suite focalizada del cierre
+## Estado autoritativo
 
-Comando principal:
+Fecha de corte: 24 de agosto de 2026.
 
-```bash
-./vendor/bin/sail artisan test \
-    tests/Feature/Security/SellerTypeRevalidationTest.php \
-    tests/Feature/Security/StoreAutoApprovalControlTest.php \
-    tests/Feature/Security/PublishedProductScopeTest.php \
-    tests/Feature/Security/PublicProductCatalogTest.php
-```
+| Suite | Resultado |
+| --- | ---: |
+| tests/Feature/Security + tests/Unit/Security | 152 passed, 936 assertions, 0 failed |
+| ModerationMigrationCompatibilityTest | 2 passed, 67 assertions |
+| ProductSlugUpdateTest + KycStatusUpdateTest | 10 passed, 47 assertions |
+| Suite completa | 193 passed, 16 failed, 1162 assertions |
+| Pint completo | 60 style issues sobre 239 archivos |
 
-Resultado validado el 16 de agosto de 2026:
+La primera ejecución focal mostró un artefacto temporal del entorno de pruebas. No se usó como evidencia. El resultado limpio y autoritativo actual terminó con 152 pruebas, 936 aserciones y cero fallos.
 
-```text
-17 passed
-114 assertions
-```
+La suite completa no está verde. Pint tampoco está verde. Los números anteriores deben conservarse juntos y no resumirse como un cierre global sin fallos.
 
-Esta suite demuestra el cierre de integración pública y revalidación continua del tipo de seller.
+## Comandos de reproducción
 
-## Regresión ampliada de seguridad
+Desde la raíz del proyecto:
 
-```bash
-./vendor/bin/sail artisan test tests/Feature/Security tests/Unit/Security
-```
+    php artisan test tests/Feature/Security tests/Unit/Security --compact
 
-Resultado: `56 passed`, `380 assertions`.
+    php artisan test tests/Feature/Database/ModerationMigrationCompatibilityTest.php --compact
 
-La regresión administrativa de slug se ejecutó con:
+    php artisan test         tests/Feature/Admin/ProductSlugUpdateTest.php         tests/Feature/Admin/KycStatusUpdateTest.php         --compact
 
-```bash
-./vendor/bin/sail artisan test tests/Feature/Admin/ProductSlugUpdateTest.php
-```
+    php artisan test --compact
 
-Resultado: `4 passed`, `13 assertions`. En conjunto son 60 pruebas y 393 aserciones.
+    ./vendor/bin/pint --test
 
-El formato se validó con Pint sobre los 13 archivos PHP modificados en este cierre: `13 files`, `0 issues`.
+No ejecute suites que comparten la misma base de datos de testing en paralelo. Para resultados de cierre, use una base limpia, workers detenidos y el mismo valor efectivo de config('app.timezone') que producción.
 
-La suite ampliada y la prueba de slug son el criterio mínimo antes de modificar moderación, ownership, archivos, sanitización, variantes, referencias, slugs o confianza de tienda.
+## Criterio mínimo de aceptación
 
-## Inventario de pruebas
+Un cambio de Store/Product Moderation sólo puede aceptarse si:
 
-### Autorización y ownership
+1. la suite focal termina con cero fallos;
+2. la compatibilidad de migraciones prueba fresh y upgrade desde origin/main;
+3. los tests admin de slug y KYC siguen verdes;
+4. cualquier fallo global está reproducido y clasificado;
+5. no aparecen nuevos archivos públicos de Product;
+6. git diff --check no reporta errores de whitespace;
+7. Blade y route:list pueden construirse en el entorno objetivo;
+8. la documentación conserva riesgos residuales reales.
 
-| Archivo | Casos cubiertos |
+Un fallo focal bloquea el cierre. Un fallo global preexistente no se oculta: se documenta con nombre, conteo y causa.
+
+## Mapa obligatorio de invariantes
+
+| Invariante | Prueba principal | Inyección de fallo |
+| --- | --- | --- |
+| Store decide sólo su versión actual | StoreModerationTest | expectedVersion anterior en approve/reject/suspend/restore |
+| Transiciones Store son explícitas | StoreStateTransitionPolicyTest, StoreModerationTest | approve desde approved, suspend desde pending, submit desde suspended |
+| Perfil Store y moderación son atómicos | StoreProfileAtomicityTest | excepción dentro del flujo de moderación |
+| XSS no sale de textarea/HTML | StoredStoreXssTest, StoredProductXssTest, ProductContentSanitizerTest | cierre textarea, script, iframe, onerror, javascript URL |
+| Product approval corresponde al contenido | ProductModerationServiceTest | mutación material después de aprobar |
+| Historial conserva todas las decisiones | ProductDecisionHistoryTest | decline automático seguido de approve manual y retry |
+| Job stale no decide versión nueva | EvaluateProductForApprovalTest | Job vN ejecutado después de crear vN+1 |
+| Elegibilidad no se reutiliza por ABA | KycEligibilityEpochTest, SellerTypeRevalidationTest | reemplazar KYC o salir/volver a vendor |
+| Expiración temporal falla cerrado | KycExpirationReconciliationTest | cruzar document_expiry_date sin request del usuario |
+| Email/KYC invalidan confianza | KycEmailRevalidationTest | email no verificado o KYC deja de ser válido |
+| is_active y type cierran publicación | EligibilityAdjacentInvariantTest, ProductTypeRouteTest | Store inactiva o product_type desconocido |
+| Scope público es obligatorio | PublishedProductScopeTest, PublicProductCatalogTest | GET directo por slug inelegible |
+| Policy y locks cierran IDOR/TOCTOU | ProductPolicyTest, VendorProductMutationToctouTest | reasignar Store/ProductImage entre check y lock |
+| Hijos compartidos no contaminan | VendorSharedAttributeIsolationTest, AdminProductMutationModerationTest | atributo/valor/pivote usado por otro Product |
+| Brand/Category/Tag invalidan sincrónicamente | ProductReferenceModerationTest | cambiar referencia aprobada antes de correr worker |
+| Digital es privado e íntegro | DigitalProductPrivateStorageTest, DigitalProductFileUploadFeatureTest | path/MIME/tamaño/hash/disco incorrectos |
+| Delete digital no usa disco de BD | DigitalProductFileDeleteFeatureTest | disco configurado distinto al default |
+| Hash legacy es fail-closed | BackfillProductFileHashesTest | archivo inexistente o bytes cambiados |
+| Media Product no es URL pública | ProductMediaAuthorizationTest | usuario anónimo solicita imagen pending |
+| Soft restore no revive aprobación | SoftDeleteRestoreTest | delete y restore de Product/Store aprobados |
+| Slug race produce error controlado | ProductSlugUpdateTest, ProductSlugConflictDetectorTest | violación de products_slug_unique y QueryException ajena |
+| Ruta de tipo rechaza valores libres | ProductTypeRouteTest | GET create con tipo arbitrario |
+
+## Matriz de failure injection
+
+### Versión stale
+
+Secuencia:
+
+1. abrir Store o Product vN;
+2. crear vN+1;
+3. enviar decisión con expectedVersion N.
+
+Esperado: conflicto, ningún campo de decisión cambia y no aparece un evento que afirme revisar vN+1.
+
+### Job stale y retry
+
+Secuencia:
+
+1. encolar evaluación de Product vN;
+2. crear vN+1;
+3. ejecutar el job viejo;
+4. repetir el mismo job/evento.
+
+Esperado: vN+1 permanece intacta y la clave idempotente impide duplicar eventos.
+
+### Carrera de ownership
+
+Secuencia:
+
+1. cargar Product/hijo como owner;
+2. reasignar store_id o product_id;
+3. continuar con el modelo stale.
+
+Esperado: reautorización bajo lock rechaza; DB no cambia; un upload físico se compensa.
+
+### Fallo entre storage y DB
+
+Inyectar excepción después de escribir archivo y antes de completar moderación.
+
+Esperado: no queda fila parcial ni Product aprobado; el archivo nuevo se elimina. Para borrado post-commit fallido, el sistema debe reportar y la reconciliación operativa debe detectar el huérfano.
+
+### ABA de KYC/elegibilidad
+
+Cambiar KYC A por B, o perder y recuperar tipo/email/KYC sin nueva concesión.
+
+Esperado: epochs y pins no coinciden; confianza y aprobación anteriores no vuelven; published excluye.
+
+### Referencia compartida
+
+Cambiar Brand, Category o Tag de un Product aprobado sin ejecutar worker.
+
+Esperado inmediato: el Product deja de publicar. Después del worker: snapshot/contexto reconstruido y versión correcta.
+
+### Storage inseguro
+
+Configurar media con visibility public, serve true, throw false, disco no allowlisted o root local público.
+
+Esperado: ProductMediaStorageService falla antes de almacenar/leer.
+
+### Colisión de slug
+
+Forzar la constraint products_slug_unique después de pasar validación, y por separado lanzar una QueryException ajena.
+
+Esperado: la primera se traduce a 422; la segunda se relanza para no ocultar fallos de infraestructura.
+
+## Inventario de la suite focal
+
+### Store, historial y XSS
+
+- StoreModerationTest
+- StoreProfileAtomicityTest
+- StoreAutoApprovalControlTest
+- StoreStateTransitionPolicyTest
+- StoredStoreXssTest
+- StoredProductXssTest
+- ProductContentSanitizerTest
+- ProductDecisionHistoryTest
+
+### Elegibilidad y publicación
+
+- KycEligibilityEpochTest
+- KycEmailRevalidationTest
+- KycExpirationReconciliationTest
+- SellerTypeRevalidationTest
+- EligibilityAdjacentInvariantTest
+- EvaluateProductForApprovalTest
+- PublishedProductScopeTest
+- PublicProductCatalogTest
+- ProductTypeRouteTest
+- ProfileEmailVerificationTest
+
+### Ownership y mutaciones
+
+- ProductPolicyTest
+- VendorProductMutationToctouTest
+- VendorProductPostApprovalUpdateTest
+- VendorSharedAttributeIsolationTest
+- AdminProductMutationModerationTest
+- ProductReferenceModerationTest
+- ProductModerationServiceTest
+
+### Storage y archivos
+
+- DigitalProductFileUploadFeatureTest
+- DigitalProductFileDeleteFeatureTest
+- DigitalProductPrivateStorageTest
+- DigitalProductFileUploadServiceTest
+- BackfillProductFileHashesTest
+- ProductMediaAuthorizationTest
+- FileUploadTraitTest
+
+### Slug
+
+- ProductSlugConflictDetectorTest
+- ProductSlugUpdateTest se ejecuta en la regresión admin adicional.
+
+## Compatibilidad de migraciones
+
+ModerationMigrationCompatibilityTest debe conservar dos caminos:
+
+| Camino | Demostración |
 | --- | --- |
-| `ProductPolicyTest.php` | Owner, otra tienda, customer, email, KYC, onboarding y suspensión. |
-| `VendorProductMutationToctouTest.php` | Modelo stale, reasignación concurrente, compensación de imagen y delete bloqueado. |
-| `VendorSharedAttributeIsolationTest.php` | Atributo/valor compartido con otra tienda. |
+| Fresh | Todas las migraciones crean un esquema coherente desde cero. |
+| Upgrade | Un esquema origin/main acepta sólo migraciones aditivas nuevas y queda fail-closed. |
 
-### Moderación y publicación
+Resultado autoritativo: 2 passed, 67 assertions.
 
-| Archivo | Casos cubiertos |
-| --- | --- |
-| `ProductModerationServiceTest.php` | Incremento de versión, invalidación de aprobación, snapshot y cambio de definición. |
-| `VendorProductPostApprovalUpdateTest.php` | Cambio material del vendor vuelve a pending. |
-| `EvaluateProductForApprovalTest.php` | Autoaprobación elegible, tienda no confiable y producto sin precio vendible. |
-| `PublishedProductScopeTest.php` | Producto/tienda activos, suspensión, versión revisada, email y KYC. |
-| `PublicProductCatalogTest.php` | Integración HTTP de home, listado y detalle; 404 y aislamiento del workspace vendor. |
-| `SellerTypeRevalidationTest.php` | Revocación, remoderación, auditoría, riesgo, job obsoleto, ABA/fast-path, retorno a vendor, rollback y soft-delete/restore. |
-| `ProductReferenceModerationTest.php` | Cambio de Brand reenvía aprobados; Category y Tag usan el mismo observer pero faltan casos propios. |
-| `AdminProductMutationModerationTest.php` | Imágenes, atributos, variantes, aprobación admin, recurso compartido y límites. |
-| `StoreAutoApprovalControlTest.php` | Permiso, elegibilidad, auditoría, reenvío, idempotencia y revocación fail-closed de confianza obsoleta. |
+Además del test automatizado, antes de producción:
 
-### Archivos y XSS
+    php artisan migrate:status
+    php artisan migrate --pretend --no-interaction
 
-| Archivo | Casos cubiertos |
-| --- | --- |
-| `DigitalProductFileUploadFeatureTest.php` | PDF válido, ensamblado, cuota persistente, aislamiento y TTL. |
-| `DigitalProductFileDeleteFeatureTest.php` | Borrado vendor por HTTP, borrado admin sobre el disco configurado y ausencia de columna `disk`. |
-| `DigitalProductFileUploadServiceTest.php` | Traversal y limpieza fuera del root. |
-| `FileUploadTraitTest.php` | MIME frente a nombre `.php` y delete traversal. |
-| `ProductContentSanitizerTest.php` | Escape de textarea, atributos ejecutables, null/vacío. |
-| `StoredProductXssTest.php` | Payload persistido no rompe la edición admin. |
+Los backfills deben procesar chunks, poder reanudarse y no publicar una fila incompleta. No se modifican migraciones históricas para acomodar el refactor.
 
-### Identidad y slug
+## Regresión admin adicional
 
-| Archivo | Casos cubiertos |
-| --- | --- |
-| `ProfileEmailVerificationTest.php` | Cambio de email invalida y reenvía; email igual conserva estado. |
-| `ProductSlugUpdateTest.php` | Update, validación unique, índice contra carrera y admin stale. |
+Se ejecutaron juntas:
 
-## Casos críticos que no deben eliminarse
+- tests/Feature/Admin/ProductSlugUpdateTest.php
+- tests/Feature/Admin/KycStatusUpdateTest.php
 
-### Traversal
+Resultado: 10 passed, 47 assertions.
 
-```text
-name = ".."
-```
+KycStatusUpdate necesita el permiso KYC Management en el fixture; ProductSlugUpdate cubre validación, constraint y stale update. No se debe debilitar middleware para hacer verde un fixture.
 
-Resultado esperado:
+## Clasificación exacta de la suite completa
 
-- ValidationException/422;
-- no se crea carpeta fuera del hash;
-- ningún sentinel fuera del root cambia.
+Resultado: 193 passed, 16 failed, 1162 assertions.
 
-### XSS de textarea
-
-```html
-</textarea><img src=x onerror=alert(1)>
-```
-
-Resultado esperado:
-
-- no aparece `onerror`;
-- no aparece un cierre capaz de escapar del textarea;
-- el contenido permitido se conserva.
-
-### TOCTOU
-
-```text
-1. El vendor carga el producto como owner.
-2. store_id cambia antes de la mutación.
-3. El objeto en memoria sigue stale.
-4. La recarga bajo lock debe denegar la acción.
-```
-
-Resultado esperado:
-
-- 403;
-- sin cambios de base de datos;
-- archivo físico compensado cuando aplica.
-
-### Job obsoleto
-
-```text
-Job(v1) existe
-Vendor crea v2
-Job(v1) se ejecuta
-```
-
-Resultado esperado:
-
-- v2 no se aprueba;
-- estado, versión y revisión de v2 permanecen intactos.
-
-### Revisión admin obsoleta
-
-```text
-Formulario abierto con moderation_version=1
-Producto cambia a version=2
-Admin guarda la pestaña vieja
-```
-
-Resultado esperado: HTTP 409 y ninguna decisión sobre v2.
-
-### Seller deja de ser vendor
-
-```text
-Tienda confiable + producto v1 aprobado
-seller.user_type cambia de vendor a user
-```
-
-Resultado esperado sincrónico:
-
-- confianza desactivada;
-- producto v2 pending y aprobación anterior invalidada;
-- auditoría de sistema con tipo anterior/nuevo;
-- home, listado, detalle y `published()` dejan de exponerlo;
-- job v1 no puede aprobar v2;
-- evaluación v2 incluye `seller_not_vendor`;
-- volver a vendor crea otra versión, pero no restaura la confianza.
-
-Cuando el caller envuelve el save en `DB::transaction()` y la transacción se revierte, también deben permanecer intactos tipo, confianza, producto y auditoría. Sin transacción exterior, la garantía es fail-closed bifásica, no atomicidad del UPDATE de usuario con los efectos del servicio.
-
-### Acceso público directo
-
-```text
-GET /products/{slug}
-El slug existe, pero el producto está pending/inactive,
-su versión no está revisada o el seller ya no es vendor
-```
-
-Resultado esperado: HTTP 404. La resolución del slug debe ocurrir dentro de `published()`, no mediante un binding de producto sin filtro.
-
-## Validaciones estáticas y de framework
-
-### Sintaxis de archivos cambiados
-
-```bash
-git ls-files --modified --others --exclude-standard '*.php' \
-    | xargs -r -n1 php -l
-```
-
-### Pint sobre archivos cambiados
-
-```bash
-git ls-files --modified --others --exclude-standard '*.php' \
-    | grep -v '^resources/' \
-    | xargs -r ./vendor/bin/pint --test
-```
-
-Resultado validado:
-
-```text
-57 files passed
-```
-
-### Blade
-
-```bash
-./vendor/bin/sail artisan view:cache
-```
-
-Resultado esperado:
-
-```text
-Blade templates cached successfully.
-```
-
-### Rutas
-
-```bash
-./vendor/bin/sail artisan route:list --path=products -vv
-./vendor/bin/sail artisan route:list --path=products/digital -vv
-./vendor/bin/sail artisan route:list --path=admin/stores -vv
-```
-
-Comprobar:
-
-- público: `home`, `products.index` y `products.show` llegan a los controladores de storefront;
-- digital admin: `auth:admin`, `Product Management` y throttle de upload;
-- digital vendor: `auth`, `verified`, `user_role:vendor` y throttle;
-- confianza: `auth:admin` y `Store Auto-Approval Management`.
-
-### Migraciones sin aplicar
-
-```bash
-./vendor/bin/sail artisan migrate --pretend --no-interaction
-```
-
-Debe mostrar las cinco migraciones sin error SQL. La última (`drop_disk_from_product_files_table`) es defensiva: en `--pretend` sólo se observa su `select exists` porque la guarda `hasTable` evalúa sobre una conexión simulada; su aplicación real se valida en la suite con la prueba de esquema que confirma que `product_files` ya no tiene columna `disk`.
-
-### Diff
-
-```bash
-git diff --check
-```
-
-Las advertencias CRLF/LF no son errores de whitespace. Se observaron advertencias conocidas en las dos vistas `digital-edit.blade.php`.
-
-## Estado de la suite global
-
-Comando:
-
-```bash
-./vendor/bin/sail artisan test --compact
-```
-
-Resultado observado:
-
-```text
-70 passed
-20 failed
-406 assertions
-```
-
-Los 20 fallos ya existían fuera del módulo modificado o corresponden a fixtures/rutas desactualizados:
-
-| Suite | Fallos | Causa observada |
+| Suite | Fallos | Clasificación |
 | --- | ---: | --- |
-| `CategoryManagementTest` | 7 | El fixture no asigna `Category Management`; recibe 403. |
-| `KycDocumentDownloadTest` | 2 | El fixture no asigna `KYC Management`; recibe 403. |
-| `KycStatusUpdateTest` | 4 | El fixture no asigna `KYC Management`; recibe 403. |
-| `PasswordUpdateTest` | 2 | Prueba rutas de password no disponibles; recibe 404. |
-| `RegistrationTest` | 1 | No envía el campo obligatorio `user_type`. |
-| `ProfileTest` | 4 | Prueba verbos/rutas Breeze que esta aplicación no expone; recibe 405. |
+| CategoryManagementTest | 7 | Fixture sin permiso Category Management. |
+| KycDocumentDownloadTest | 2 | Fixture sin permiso KYC Management. |
+| PasswordUpdateTest | 2 | Rutas esperadas por el test están obsoletas/no disponibles. |
+| VendorRegistrationTest | 1 | Falta el enlace de UI esperado. |
+| ProfileTest | 4 | Verbos o rutas esperados están obsoletos. |
 
-La suite focalizada de seguridad/moderación debe permanecer verde aunque la suite histórica siga teniendo esos fallos. Es recomendable actualizar esos tests por separado para recuperar una suite global completamente verde.
+Total: 16. Son preexistentes respecto del refactor auditado. Siguen siendo deuda real; esta clasificación no equivale a una suite global verde ni autoriza ignorar fallos nuevos en esas áreas.
 
-## Pruebas manuales recomendadas
+## Pint y verificaciones estáticas
 
-### Vendor elegible
+El comando de repositorio:
 
-1. Email verificado, KYC aprobado y tienda draft/pending/approved.
-2. Crear producto físico.
-3. Confirmar `store_id` de su tienda y `approved_status = pending`.
-4. Confirmar review versión 1.
-5. Intentar editar un producto ajeno y esperar 403.
+    ./vendor/bin/pint --test
 
-### Autoaprobación
+no está verde: reporta 60 style issues sobre 239 archivos, principalmente preexistentes. No documentar 0 issues ni files passed como resultado global.
 
-1. Usar tienda activa, no suspendida y vendor elegible.
-2. Asignar el permiso dedicado al admin.
-3. Activar confianza con razón.
-4. Confirmar audit y reenvío de pendientes.
-5. Crear físico con categoría, imagen y precio.
-6. Procesar cola y confirmar aprobación automática.
-7. Crear digital y confirmar que permanece pending.
+Comprobaciones adicionales:
 
-### Cambio posterior
+    git diff --check
 
-1. Partir de v1 aprobada.
-2. Cambiar slug, stock, imagen, atributo o variante como vendor.
-3. Confirmar v2 pending y limpieza de aprobación.
-4. Ejecutar job v1 y confirmar que no toca v2.
+    git ls-files --modified --others --exclude-standard '*.php'         | xargs -r -n1 php -l
 
-### Publicación
+    php artisan view:cache
 
-Probar `/`, `/products` y `/products/{slug}`. El elegible debe aparecer en home/listado y abrir detalle; cada exclusión debe ocultarlo y hacer que el acceso directo responda 404:
+    php artisan route:list --path=products -vv
+    php artisan route:list --path=admin/stores -vv
 
-- producto inactive;
-- aprobación pending/rejected;
-- versión no revisada;
-- tienda draft/pending/suspended;
-- seller que no es vendor;
-- email sin verificar;
-- KYC no aprobado.
+Las advertencias de conversión CRLF/LF no son por sí mismas errores de whitespace. Un error real de diff --check sí debe corregirse.
 
-Confirmar también que `/vendor/products` continúa mostrando los borradores propios: el scope público no debe convertirse en global.
+## Pruebas operativas de storage
 
-### Upload digital
+### Media privada local
 
-1. Subir un PDF real en un chunk.
-2. Confirmar ruta privada y extensión `pdf`.
-3. Repetir con nombre traversal y metadata inconsistente.
-4. Superar cuota de producto y esperar 422.
-5. Eliminar y confirmar relación producto/archivo.
+- confirmar que el root no está bajo public ni storage/app/public;
+- solicitar imagen published como anónimo y esperar 200;
+- solicitar imagen pending como anónimo y esperar 404;
+- solicitarla como owner/admin autorizado y esperar 200;
+- comprobar no-store y nosniff;
+- confirmar que no hay binarios Product planos en public/uploads.
 
-### XSS
+### S3
 
-Probar:
+Los tests locales sólo validan configuración y contrato de aplicación. En staging real comprobar:
 
-- `script`;
-- `iframe`;
-- evento `onerror`;
-- `javascript:` en href;
-- breakout de textarea;
-- link `_blank`.
+- Block Public Access habilitado;
+- sin ACL/bucket policy públicas ni website hosting;
+- IAM mínimo limitado a bucket/prefijo;
+- TLS y cifrado en reposo;
+- listing anónimo denegado;
+- GET directo al objeto denegado;
+- endpoint controlado funciona y no filtra URL pública;
+- borrado, retry, timeout, logging y lifecycle.
 
-Confirmar que sólo queda HTML permitido y que `_blank` contiene `noopener noreferrer`.
+Una prueba con Storage::fake no demuestra la bucket policy.
 
-## Cobertura pendiente recomendada
+### Malware scanning
 
-1. Request vendor con todos los campos administrativos prohibidos.
-2. Endpoint vendor excediendo límites de variantes.
-3. Respuesta HTTP controlada ante colisión única concurrente de slug.
-4. Descarga digital con headers seguros y autorización.
-5. Cuota de tienda bajo finalización simultánea en productos distintos.
-6. Reconciliación de archivos huérfanos.
-7. Malware scanning cuando se incorpore el servicio.
-8. Casos específicos de actualización/eliminación de Category y Tag.
+Hoy no existe garantía antivirus. Al integrarlo, añadir estados quarantine, clean, infected y failed. Inyectar timeout, motor caído, muestra EICAR en entorno seguro y archivo ambiguo. Sólo clean puede distribuirse; timeout/error debe fallar cerrado. MIME y SHA-256 no reemplazan scanning.
+
+## Pruebas manuales mínimas
+
+1. Vendor elegible crea Product físico: queda pending con versión/evento.
+2. Admin decide con versión actual; pestaña stale obtiene conflicto.
+3. Vendor cambia contenido aprobado: nueva versión pending.
+4. KYC expira: Store/Product dejan de publicar sin request adicional.
+5. Store approved pasa a suspended y sólo restore puede reactivarla.
+6. Cambiar Tag de Product aprobado lo retira antes del worker.
+7. Imagen pending no es accesible anónimamente; owner/admin sí.
+8. Digital con hash ausente no se autoaprueba.
+9. Soft delete/restore no recupera confianza ni aprobación.
+10. Slug concurrente devuelve validación y no oculta otra excepción SQL.
 
 ## Regla para nuevas pruebas
 
-Cada nuevo campo o subrecurso material debe incluir como mínimo:
+Cada campo, subrecurso o consumer público nuevo debe demostrar:
 
-- snapshot/fingerprint cambia;
-- versión incrementa;
-- aprobación anterior se invalida;
-- ownership de otra tienda se rechaza;
-- job antiguo no decide la versión nueva;
-- admin stale recibe conflicto;
-- consulta pública no expone estado no elegible.
-
-## Store & Product Moderation Refactor
-
-See `docs/refactor-implementation.md` for the complete implementation record:
-versioned Store moderation, Product content/eligibility separation, KYC/email
-revalidation, synchronous reference invalidation, digital file hashes, and
-soft-delete safety.
-
+- si es material, cambia snapshot/hash y versión;
+- invalida decisión anterior;
+- conserva historial append-only;
+- rechaza otro owner y una reasignación concurrente;
+- un job stale no decide la nueva versión;
+- un estado inelegible no aparece públicamente;
+- los fallos de DB/storage se compensan o quedan detectables;
+- los tests usan permisos reales, no relajan middleware.

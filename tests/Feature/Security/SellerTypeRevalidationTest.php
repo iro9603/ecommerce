@@ -32,58 +32,40 @@ test('a seller type change synchronously revokes trust and invalidates existing 
         storeOverrides: ['auto_approve_products' => true],
     );
     $product = reviewedProductForSellerTypeTest($vendor);
+    $contentHash = $product->moderation_fingerprint;
+    $userEpoch = (int) $vendor['user']->eligibility_epoch;
 
     expect(Product::query()->published()->whereKey($product)->exists())->toBeTrue();
 
     $vendor['user']->forceFill(['user_type' => 'user'])->save();
 
     $product->refresh();
-    $newReview = ProductApprovalReview::query()
-        ->where('product_id', $product->getKey())
-        ->where('version', 2)
-        ->sole();
     $audit = StoreAutoApprovalAudit::query()->sole();
 
     expect($vendor['store']->fresh()->auto_approve_products)->toBeFalse()
-        ->and($product->approved_status)->toBe(Product::APPROVAL_PENDING)
-        ->and($product->moderation_version)->toBe(2)
-        ->and($product->reviewed_version)->toBeNull()
-        ->and($product->approved_at)->toBeNull()
-        ->and($newReview->status)->toBe(ProductApprovalReview::STATUS_PENDING)
-        ->and($newReview->evaluation_context['seller_user_type'])->toBe('user')
+        ->and($product->approved_status)->toBe(Product::APPROVAL_APPROVED)
+        ->and($product->moderation_version)->toBe(1)
+        ->and($product->reviewed_version)->toBe(1)
+        ->and($product->moderation_fingerprint)->toBe($contentHash)
+        ->and($vendor['user']->fresh()->eligibility_epoch)->toBe($userEpoch + 1)
         ->and($audit->admin_id)->toBeNull()
         ->and($audit->previous_value)->toBeTrue()
         ->and($audit->new_value)->toBeFalse()
-        ->and($audit->pending_products_resubmitted)->toBe(1)
+        ->and($audit->pending_products_resubmitted)->toBe(0)
         ->and($audit->eligibility_snapshot['trigger'])->toBe('seller_user_type_changed')
         ->and($audit->eligibility_snapshot['previous_seller_user_type'])->toBe('vendor')
         ->and($audit->eligibility_snapshot['seller_user_type'])->toBe('user')
         ->and(Product::query()->published()->whereKey($product)->exists())->toBeFalse();
-
-    Queue::assertPushed(
-        EvaluateProductForApproval::class,
-        fn (EvaluateProductForApproval $job): bool => $job->productId === $product->getKey()
-            && $job->moderationVersion === 2,
-    );
-
-    // A stale evaluation can never approve the newly submitted version.
-    expect(app(ProductModerationService::class)->evaluatePending($product->getKey(), 1))
-        ->toBeFalse();
-
-    (new EvaluateProductForApproval($product->getKey(), 2))
-        ->handle(app(ProductModerationService::class));
-    $newReview->refresh();
-
-    expect($product->fresh()->approved_status)->toBe(Product::APPROVAL_PENDING)
-        ->and(array_column($newReview->risk_reasons, 'code'))->toContain('seller_not_vendor');
 
     // Returning to vendor invalidates the non-vendor snapshot too, but never
     // restores the store's previous automatic-approval trust.
     $vendor['user']->forceFill(['user_type' => 'vendor'])->save();
 
     expect($vendor['store']->fresh()->auto_approve_products)->toBeFalse()
-        ->and($product->fresh()->approved_status)->toBe(Product::APPROVAL_PENDING)
-        ->and($product->fresh()->moderation_version)->toBe(3)
+        ->and($product->fresh()->approved_status)->toBe(Product::APPROVAL_APPROVED)
+        ->and($product->fresh()->moderation_version)->toBe(1)
+        ->and($product->fresh()->moderation_fingerprint)->toBe($contentHash)
+        ->and($vendor['user']->fresh()->eligibility_epoch)->toBe($userEpoch + 2)
         ->and(StoreAutoApprovalAudit::query()->count())->toBe(1)
         ->and(Product::query()->published()->whereKey($product)->exists())->toBeFalse();
 });

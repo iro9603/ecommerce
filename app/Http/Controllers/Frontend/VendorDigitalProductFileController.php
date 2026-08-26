@@ -19,70 +19,30 @@ class VendorDigitalProductFileController extends Controller
     public function store(
         DigitalProductChunkUploadRequest $request,
         DigitalProductFileUploadService $uploads,
-        ProductModerationService $moderation,
     ): JsonResponse {
         $product = Product::query()
             ->whereKey((int) $request->validated('product_id'))
             ->firstOrFail();
         Gate::authorize('manageDigitalFiles', $product);
 
-        $storedPath = null;
-        $productFileId = null;
-
-        try {
-            $result = $uploads->storeChunk(
-                $product,
-                $request->file('file'),
-                [
-                    'uuid' => $request->chunkStorageKey(),
-                    'index' => (int) $request->validated('dzchunkindex'),
-                    'total_chunks' => (int) $request->validated('dztotalchunkcount'),
-                    'total_size' => (int) $request->validated('dztotalfilesize'),
-                    'original_name' => (string) $request->validated('name'),
-                ],
-                'vendor:'.$request->user()->getKey(),
-            );
-
-            if ($result['complete']) {
-                $storedPath = (string) $result['product_file']->path;
-                $productFileId = (int) $result['product_file']->getKey();
-
-                DB::transaction(function () use (
-                    $product,
-                    $productFileId,
-                    $moderation,
-                    $request
-                ): void {
-                    $lockedProduct = Product::query()
-                        ->whereKey($product->getKey())
-                        ->lockForUpdate()
-                        ->firstOrFail();
-                    Gate::authorize('manageDigitalFiles', $lockedProduct);
-
-                    ProductFile::query()
-                        ->whereKey($productFileId)
-                        ->where('product_id', $lockedProduct->getKey())
-                        ->lockForUpdate()
-                        ->firstOrFail();
-
-                    $moderation->markForReview(
-                        $lockedProduct,
-                        $request->user(),
-                        'Digital product file changed by vendor.',
-                    );
-                });
-            }
-        } catch (\Throwable $exception) {
-            if ($storedPath !== null) {
-                Storage::disk((string) config('products.digital_upload.disk', 'local'))->delete($storedPath);
-            }
-
-            if ($productFileId !== null) {
-                ProductFile::query()->whereKey($productFileId)->delete();
-            }
-
-            throw $exception;
-        }
+        $result = $uploads->storeChunk(
+            $product,
+            $request->file('file'),
+            [
+                'uuid' => $request->chunkStorageKey(),
+                'index' => (int) $request->validated('dzchunkindex'),
+                'total_chunks' => (int) $request->validated('dztotalchunkcount'),
+                'total_size' => (int) $request->validated('dztotalfilesize'),
+                'original_name' => (string) $request->validated('name'),
+            ],
+            'vendor:'.$request->user()->getKey(),
+            static fn (Product $lockedProduct) => Gate::authorize(
+                'manageDigitalFiles',
+                $lockedProduct,
+            ),
+            $request->user(),
+            'Digital product file changed by vendor.',
+        );
 
         if (! $result['complete']) {
             return response()->json([
@@ -103,7 +63,7 @@ class VendorDigitalProductFileController extends Controller
         ProductFile $file,
         ProductModerationService $moderation,
     ): JsonResponse {
-        $disk = (string) config('products.digital_upload.disk', 'local');
+        $disk = (string) config('products.digital_upload.disk', 'private');
 
         $path = DB::transaction(function () use (
             $request,
@@ -133,7 +93,7 @@ class VendorDigitalProductFileController extends Controller
             );
 
             return $path;
-        });
+        }, 5);
 
         Storage::disk($disk)->delete($path);
 

@@ -42,11 +42,11 @@ return new class extends Migration
             $table->enum('status', [
                 'draft',
                 'pending',
-                'approved',
+                'active',
                 'suspended',
                 'rejected',
             ])->default('draft')->index();
-            $table->boolean('is_active')->default(false);
+
             $table->string('currency', 3)->default('MXN');
             $table->string('timezone')->default('America/Mexico_City');
             $table->string('country', 2)->default('MX');

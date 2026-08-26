@@ -13,7 +13,17 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Normalize existing data before altering the enum.
+        Schema::table('stores', function (Blueprint $table) {
+            $table->enum('status', [
+                'draft',
+                'pending',
+                'active',
+                'approved',
+                'suspended',
+                'rejected',
+            ])->default('draft')->change();
+        });
+
         DB::table('stores')->where('status', 'active')->update(['status' => 'approved']);
 
         Schema::table('stores', function (Blueprint $table) {
@@ -32,7 +42,17 @@ return new class extends Migration
      */
     public function down(): void
     {
-        // Restore 'approved' rows back to 'active' before reverting the enum.
+        Schema::table('stores', function (Blueprint $table) {
+            $table->enum('status', [
+                'draft',
+                'pending',
+                'active',
+                'approved',
+                'suspended',
+                'rejected',
+            ])->default('draft')->change();
+        });
+
         DB::table('stores')->where('status', 'approved')->update(['status' => 'active']);
 
         Schema::table('stores', function (Blueprint $table) {

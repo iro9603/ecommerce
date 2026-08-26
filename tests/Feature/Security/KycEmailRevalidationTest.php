@@ -38,9 +38,9 @@ test('losing KYC revokes trust and invalidates product reviews without automatic
     $audit = StoreAutoApprovalAudit::query()->sole();
 
     expect($vendor['store']->fresh()->auto_approve_products)->toBeFalse()
-        ->and($product->approved_status)->toBe(Product::APPROVAL_PENDING)
-        ->and($product->moderation_version)->toBe(2)
-        ->and($product->reviewed_version)->toBeNull()
+        ->and($product->approved_status)->toBe(Product::APPROVAL_APPROVED)
+        ->and($product->moderation_version)->toBe(1)
+        ->and($product->reviewed_version)->toBe(1)
         ->and(Product::query()->published()->whereKey($product)->exists())->toBeFalse()
         ->and($audit->admin_id)->toBeNull()
         ->and($audit->eligibility_snapshot['trigger'])->toBe('kyc_status_changed');
@@ -48,7 +48,8 @@ test('losing KYC revokes trust and invalidates product reviews without automatic
     $vendor['kyc']->forceFill(['status' => 'approved'])->save();
 
     expect($vendor['store']->fresh()->auto_approve_products)->toBeFalse()
-        ->and($product->fresh()->approved_status)->toBe(Product::APPROVAL_PENDING)
+        ->and($product->fresh()->approved_status)->toBe(Product::APPROVAL_APPROVED)
+        ->and($product->fresh()->moderation_version)->toBe(1)
         ->and(StoreAutoApprovalAudit::query()->count())->toBe(1)
         ->and(Product::query()->published()->whereKey($product)->exists())->toBeFalse();
 });
@@ -70,9 +71,9 @@ test('changing a seller email revokes trust and invalidates product reviews with
     $audit = StoreAutoApprovalAudit::query()->sole();
 
     expect($vendor['store']->fresh()->auto_approve_products)->toBeFalse()
-        ->and($product->approved_status)->toBe(Product::APPROVAL_PENDING)
-        ->and($product->moderation_version)->toBe(2)
-        ->and($product->reviewed_version)->toBeNull()
+        ->and($product->approved_status)->toBe(Product::APPROVAL_APPROVED)
+        ->and($product->moderation_version)->toBe(1)
+        ->and($product->reviewed_version)->toBe(1)
         ->and(Product::query()->published()->whereKey($product)->exists())->toBeFalse()
         ->and($audit->admin_id)->toBeNull()
         ->and($audit->eligibility_snapshot['trigger'])->toBe('seller_email_changed');
@@ -80,7 +81,8 @@ test('changing a seller email revokes trust and invalidates product reviews with
     $vendor['user']->forceFill(['email_verified_at' => now()])->save();
 
     expect($vendor['store']->fresh()->auto_approve_products)->toBeFalse()
-        ->and($product->fresh()->approved_status)->toBe(Product::APPROVAL_PENDING)
+        ->and($product->fresh()->approved_status)->toBe(Product::APPROVAL_APPROVED)
+        ->and($product->fresh()->moderation_version)->toBe(1)
         ->and(StoreAutoApprovalAudit::query()->count())->toBe(1)
         ->and(Product::query()->published()->whereKey($product)->exists())->toBeFalse();
 });

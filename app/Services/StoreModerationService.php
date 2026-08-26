@@ -7,11 +7,15 @@ use App\Models\Store;
 use App\Models\StoreApprovalReview;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class StoreModerationService
 {
     public function __construct(
         private readonly ProductModerationService $moderation,
+        private readonly ProductContentSanitizer $contentSanitizer,
+        private readonly SellerEligibilityService $eligibility,
+        private readonly StoreStateTransitionPolicy $transitions,
     ) {}
 
     public function reevaluatePendingProducts(Store $store, string $reason): int
@@ -40,11 +44,102 @@ class StoreModerationService
             'postal_code',
             'currency',
             'country',
+            'timezone',
             'seo_title',
             'seo_description',
             'social_links',
             'seller_id',
         ];
+    }
+
+    /**
+     * @return array{store: Store, review: ?StoreApprovalReview, was_approved: bool, replaced_media: list<string>}
+     */
+    public function updateProfile(User $seller, array $attributes): array
+    {
+        $attributes = $this->sanitizeProfileContent($attributes);
+
+        return DB::transaction(function () use ($seller, $attributes): array {
+            $lockedSeller = User::withTrashed()
+                ->whereKey($seller->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            abort_if(
+                $lockedSeller->trashed() || $lockedSeller->user_type !== 'vendor',
+                403,
+                'Only an active vendor can update a store profile.',
+            );
+
+            $current = Store::withTrashed()
+                ->where('seller_id', $lockedSeller->getKey())
+                ->lockForUpdate()
+                ->first();
+
+            abort_if(
+                $current?->trashed(),
+                409,
+                'A deleted store profile must be restored before it can be updated.',
+            );
+
+            $isNew = $current === null;
+            $current ??= new Store();
+
+            if ($isNew) {
+                $current->seller_id = $lockedSeller->getKey();
+                $current->slug = $this->uniqueSlug((string) $attributes['name']);
+            }
+
+            $wasApproved = ! $isNew && $current->isApproved();
+            $replacedMedia = [];
+
+            foreach (['logo', 'banner'] as $field) {
+                if (
+                    array_key_exists($field, $attributes)
+                    && $current->{$field}
+                    && $current->{$field} !== $attributes[$field]
+                ) {
+                    $replacedMedia[] = (string) $current->{$field};
+                }
+            }
+
+            $current->fill($attributes);
+            $hasMaterialChanges = $isNew || $current->isDirty(self::materialFields());
+
+            if ($current->isDirty() || $isNew) {
+                $current->save();
+            }
+
+            $review = $hasMaterialChanges
+                ? $this->submitForReview(
+                    $current,
+                    $lockedSeller,
+                    $wasApproved
+                        ? 'The vendor updated the store profile after it was approved.'
+                        : 'The vendor created or updated the store profile.',
+                )
+                : null;
+
+            $current->refresh();
+
+            return [
+                'store' => $current,
+                'review' => $review,
+                'was_approved' => $wasApproved,
+                'replaced_media' => array_values(array_unique($replacedMedia)),
+            ];
+        }, 5);
+    }
+
+    private function sanitizeProfileContent(array $attributes): array
+    {
+        foreach (['short_description', 'long_description'] as $field) {
+            if (array_key_exists($field, $attributes)) {
+                $attributes[$field] = $this->contentSanitizer->sanitize($attributes[$field]);
+            }
+        }
+
+        return $attributes;
     }
 
     public function submitForReview(
@@ -54,6 +149,8 @@ class StoreModerationService
     ): ?StoreApprovalReview {
         return DB::transaction(function () use ($store, $submittedBy, $reason): ?StoreApprovalReview {
             $current = $this->lockStore($store);
+            $this->transitions->assertAllowed($current, StoreStateTransitionPolicy::ACTION_SUBMIT);
+
             $snapshot = $this->snapshot($current);
             $fingerprint = $this->contentHash($snapshot);
             $version = (int) $current->moderation_version;
@@ -99,6 +196,11 @@ class StoreModerationService
                 'moderation_fingerprint' => $fingerprint,
                 'moderation_reason' => $this->cleanReason($reason),
                 'submitted_at' => $submittedAt,
+                'auto_approve_products' => false,
+                'auto_approval_user_epoch' => null,
+                'auto_approval_kyc_id' => null,
+                'auto_approval_kyc_epoch' => null,
+                'auto_approval_store_epoch' => null,
             ])->save();
 
             return StoreApprovalReview::query()->create([
@@ -127,6 +229,7 @@ class StoreModerationService
         return $this->decide(
             $store,
             $admin,
+            StoreStateTransitionPolicy::ACTION_APPROVE,
             Store::STATUS_APPROVED,
             StoreApprovalReview::STATUS_APPROVED,
             $reason ?? 'Approved by an administrator.',
@@ -143,6 +246,7 @@ class StoreModerationService
         return $this->decide(
             $store,
             $admin,
+            StoreStateTransitionPolicy::ACTION_REJECT,
             Store::STATUS_REJECTED,
             StoreApprovalReview::STATUS_REJECTED,
             $reason,
@@ -159,6 +263,7 @@ class StoreModerationService
         return $this->decide(
             $store,
             $admin,
+            StoreStateTransitionPolicy::ACTION_SUSPEND,
             Store::STATUS_SUSPENDED,
             StoreApprovalReview::STATUS_SUSPENDED,
             $reason,
@@ -174,6 +279,7 @@ class StoreModerationService
         return $this->decide(
             $store,
             $admin,
+            StoreStateTransitionPolicy::ACTION_RESTORE,
             Store::STATUS_APPROVED,
             StoreApprovalReview::STATUS_RESTORED,
             'Restored by an administrator.',
@@ -184,6 +290,7 @@ class StoreModerationService
     private function decide(
         Store $store,
         Admin $admin,
+        string $action,
         string $storeStatus,
         string $reviewStatus,
         string $reason,
@@ -192,6 +299,7 @@ class StoreModerationService
         return DB::transaction(function () use (
             $store,
             $admin,
+            $action,
             $storeStatus,
             $reviewStatus,
             $reason,
@@ -203,6 +311,8 @@ class StoreModerationService
             if ($expectedVersion !== null && $expectedVersion !== $version) {
                 return null;
             }
+
+            $this->transitions->assertAllowed($current, $action);
 
             if (in_array($storeStatus, [Store::STATUS_APPROVED], true)) {
                 $this->assertEligibleForApproval($current);
@@ -223,6 +333,11 @@ class StoreModerationService
                 'rejected_at' => $storeStatus === Store::STATUS_REJECTED ? $reviewedAt : null,
                 'rejection_reason' => $storeStatus === Store::STATUS_REJECTED ? $decisionReason : null,
                 'suspended_at' => $storeStatus === Store::STATUS_SUSPENDED ? $reviewedAt : null,
+                'auto_approve_products' => false,
+                'auto_approval_user_epoch' => null,
+                'auto_approval_kyc_id' => null,
+                'auto_approval_kyc_epoch' => null,
+                'auto_approval_store_epoch' => null,
             ];
 
             if ($storeStatus === Store::STATUS_APPROVED) {
@@ -251,16 +366,14 @@ class StoreModerationService
 
     private function lockStore(Store $store): Store
     {
-        $sellerId = Store::query()
-            ->whereKey($store->getKey())
-            ->value('seller_id');
+        $sellerId = (int) $store->seller_id;
+        abort_if($sellerId < 1, 409, 'The store seller association changed.');
 
-        if ($sellerId !== null) {
-            User::query()->whereKey($sellerId)->lockForUpdate()->first();
-        }
+        User::withTrashed()->whereKey($sellerId)->lockForUpdate()->firstOrFail();
 
         return Store::query()
             ->whereKey($store->getKey())
+            ->where('seller_id', $sellerId)
             ->lockForUpdate()
             ->firstOrFail();
     }
@@ -269,11 +382,7 @@ class StoreModerationService
     {
         $store->load(['seller.kyc']);
 
-        $seller = $store->seller;
-        $eligible = $seller
-            && $seller->user_type === 'vendor'
-            && $seller->email_verified_at !== null
-            && $seller->kyc?->status === 'approved';
+        $eligible = $this->eligibility->sellerSnapshot($store->seller)['eligible'];
 
         abort_unless($eligible, 422, 'The store cannot be approved: the seller must be a verified vendor with approved KYC.');
     }
@@ -293,25 +402,7 @@ class StoreModerationService
 
     private function eligibilitySnapshot(Store $store): array
     {
-        $store->loadMissing(['seller.kyc']);
-        $seller = $store->seller;
-
-        $snapshot = [
-            'store_status' => $store->status,
-            'store_not_suspended' => $store->suspended_at === null,
-            'seller_user_type' => $seller?->user_type,
-            'seller_is_vendor' => $seller?->user_type === 'vendor',
-            'seller_email_verified' => $seller?->email_verified_at !== null,
-            'kyc_status' => $seller?->kyc?->status,
-        ];
-
-        $snapshot['eligible'] = $snapshot['store_status'] === 'approved'
-            && $snapshot['store_not_suspended']
-            && $snapshot['seller_is_vendor']
-            && $snapshot['seller_email_verified']
-            && $snapshot['kyc_status'] === 'approved';
-
-        return $snapshot;
+        return $this->eligibility->storeSnapshot($store);
     }
 
     private function contentHash(array $snapshot): string
@@ -327,5 +418,19 @@ class StoreModerationService
         $reason = trim((string) $reason);
 
         return $reason === '' ? null : mb_substr($reason, 0, 5000);
+    }
+
+    private function uniqueSlug(string $name): string
+    {
+        $baseSlug = Str::slug($name) ?: 'store';
+        $slug = $baseSlug;
+        $suffix = 2;
+
+        while (Store::withTrashed()->where('slug', $slug)->exists()) {
+            $slug = $baseSlug.'-'.$suffix;
+            $suffix++;
+        }
+
+        return $slug;
     }
 }

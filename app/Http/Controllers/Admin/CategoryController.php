@@ -11,6 +11,7 @@ use App\Services\CategoryTreeService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class CategoryController extends Controller implements HasMiddleware
@@ -42,12 +43,16 @@ class CategoryController extends Controller implements HasMiddleware
 
     public function update(UpdateCategoryRequest $request, int $id)
     {
-        $category = Category::findOrFail($id);
         $data = $request->validated();
         $data['parent_id'] = $data['parent_id'] ?? null;
         $data['is_active'] = $request->boolean('is_active');
 
-        $category->update($data);
+        $category = DB::transaction(function () use ($id, $data): Category {
+            $current = Category::query()->whereKey($id)->lockForUpdate()->firstOrFail();
+            $current->forceFill($data)->save();
+
+            return $current;
+        }, 3);
 
         return response()->json(['success' => true, 'message' => 'Category updated successfully.',  'category' => $category]);
     }
@@ -74,13 +79,21 @@ class CategoryController extends Controller implements HasMiddleware
 
     public function destroy(int $id)
     {
-        $category = Category::findOrFail($id);
+        $deleted = DB::transaction(function () use ($id): bool {
+            $category = Category::query()->whereKey($id)->lockForUpdate()->firstOrFail();
 
-        if ($category->children()->count() > 0) {
+            if ($category->children()->lockForUpdate()->exists()) {
+                return false;
+            }
+
+            $category->delete();
+
+            return true;
+        }, 3);
+
+        if (! $deleted) {
             return response()->json(['error' => true, 'message' => 'Category has children and cannot be deleted'], 422);
         }
-
-        $category->delete();
 
         return response()->json(['success' => true, 'message' => 'Category deleted successfully']);
     }

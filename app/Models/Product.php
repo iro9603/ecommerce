@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\SellerEligibilityService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -28,32 +29,58 @@ class Product extends Model
             'moderation_version' => 'integer',
             'reviewed_version' => 'integer',
             'risk_score' => 'integer',
+            'reviewed_user_eligibility_epoch' => 'integer',
+            'reviewed_kyc_id' => 'integer',
+            'reviewed_kyc_eligibility_epoch' => 'integer',
+            'reviewed_store_eligibility_epoch' => 'integer',
         ];
     }
 
     public function scopePublished(Builder $query): Builder
     {
+        $eligibility = app(SellerEligibilityService::class);
+
         return $query
             ->where($query->qualifyColumn('approved_status'), self::APPROVAL_APPROVED)
             ->where($query->qualifyColumn('status'), 'active')
+            ->whereIn($query->qualifyColumn('product_type'), ['physical', 'digital'])
             ->where($query->qualifyColumn('moderation_version'), '>', 0)
             ->whereColumn(
                 $query->qualifyColumn('reviewed_version'),
                 $query->qualifyColumn('moderation_version')
             )
-            ->whereHas('store', fn(Builder $storeQuery) => $storeQuery
-                ->where('status', 'approved')
-                ->whereNull('suspended_at')
-                ->where($storeQuery->qualifyColumn('moderation_version'), '>', 0)
-                ->whereColumn(
-                    $storeQuery->qualifyColumn('reviewed_version'),
-                    $storeQuery->qualifyColumn('moderation_version')
-                )
-                ->whereHas('seller', fn(Builder $sellerQuery) => $sellerQuery
-                    ->where('user_type', 'vendor')
-                    ->whereNotNull('email_verified_at')
-                    ->whereHas('kyc', fn(Builder $kycQuery) => $kycQuery
-                        ->where('status', 'approved'))));
+            ->where(
+                $query->qualifyColumn('reviewed_policy_version'),
+                (string) config('product_moderation.policy_version'),
+            )
+            ->whereHas('store', function (Builder $storeQuery) use ($eligibility): void {
+                $eligibility->applyPublishableStoreQuery($storeQuery);
+                $storeQuery
+                    ->whereColumn(
+                        $storeQuery->qualifyColumn('eligibility_epoch'),
+                        'products.reviewed_store_eligibility_epoch',
+                    )
+                    ->whereHas('seller', function (Builder $sellerQuery) use ($eligibility): void {
+                        $eligibility->applyEligibleSellerQuery($sellerQuery);
+                        $sellerQuery
+                            ->whereColumn(
+                                $sellerQuery->qualifyColumn('eligibility_epoch'),
+                                'products.reviewed_user_eligibility_epoch',
+                            )
+                            ->whereHas('kyc', function (Builder $kycQuery) use ($eligibility): void {
+                                $eligibility->applyEligibleKycQuery($kycQuery);
+                                $kycQuery
+                                    ->whereColumn(
+                                        $kycQuery->qualifyColumn('id'),
+                                        'products.reviewed_kyc_id',
+                                    )
+                                    ->whereColumn(
+                                        $kycQuery->qualifyColumn('eligibility_epoch'),
+                                        'products.reviewed_kyc_eligibility_epoch',
+                                    );
+                            });
+                    });
+            });
     }
 
     public function categories(): BelongsToMany

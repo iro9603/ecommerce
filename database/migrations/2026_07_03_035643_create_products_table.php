@@ -32,8 +32,7 @@ return new class extends Migration
             $table->integer('qty')->nullable();
             $table->boolean('in_stock')->nullable();
             $table->integer('viewed')->nullable();
-            $table->enum('status', ['active', 'inactive', 'draft'])->nullable();
-            $table->enum('approved_status', ['approved', 'pending', 'rejected'])->default('pending')->nullable();
+            $table->enum('status', ['active', 'inactive', 'draft', 'pending'])->nullable();
             $table->boolean('is_featured')->nullable();
             $table->boolean('is_hot')->nullable();
             $table->boolean('is_new')->nullable();

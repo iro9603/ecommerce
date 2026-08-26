@@ -26,7 +26,6 @@ class AdminDigitalProductFileController extends Controller implements HasMiddlew
     public function store(
         DigitalProductChunkUploadRequest $request,
         DigitalProductFileUploadService $uploads,
-        ProductModerationService $moderation,
     ): JsonResponse {
         $admin = Auth::guard('admin')->user();
         abort_unless($admin instanceof Admin, 401);
@@ -36,62 +35,24 @@ class AdminDigitalProductFileController extends Controller implements HasMiddlew
             ->firstOrFail();
         abort_unless($product->product_type === 'digital', 404);
 
-        $storedPath = null;
-        $productFileId = null;
-
-        try {
-            $result = $uploads->storeChunk(
-                $product,
-                $request->file('file'),
-                [
-                    'uuid' => $request->chunkStorageKey(),
-                    'index' => (int) $request->validated('dzchunkindex'),
-                    'total_chunks' => (int) $request->validated('dztotalchunkcount'),
-                    'total_size' => (int) $request->validated('dztotalfilesize'),
-                    'original_name' => (string) $request->validated('name'),
-                ],
-                'admin:'.$admin->getKey(),
-            );
-
-            if ($result['complete']) {
-                $storedPath = (string) $result['product_file']->path;
-                $productFileId = (int) $result['product_file']->getKey();
-
-                DB::transaction(function () use (
-                    $product,
-                    $productFileId,
-                    $moderation
-                ): void {
-                    $lockedProduct = Product::query()
-                        ->whereKey($product->getKey())
-                        ->lockForUpdate()
-                        ->firstOrFail();
-                    abort_unless($lockedProduct->product_type === 'digital', 404);
-
-                    ProductFile::query()
-                        ->whereKey($productFileId)
-                        ->where('product_id', $lockedProduct->getKey())
-                        ->lockForUpdate()
-                        ->firstOrFail();
-
-                    $moderation->markForReview(
-                        $lockedProduct,
-                        null,
-                        'Digital product file changed by administrator.',
-                    );
-                });
-            }
-        } catch (\Throwable $exception) {
-            if ($storedPath !== null) {
-                Storage::disk((string) config('products.digital_upload.disk', 'local'))->delete($storedPath);
-            }
-
-            if ($productFileId !== null) {
-                ProductFile::query()->whereKey($productFileId)->delete();
-            }
-
-            throw $exception;
-        }
+        $result = $uploads->storeChunk(
+            $product,
+            $request->file('file'),
+            [
+                'uuid' => $request->chunkStorageKey(),
+                'index' => (int) $request->validated('dzchunkindex'),
+                'total_chunks' => (int) $request->validated('dztotalchunkcount'),
+                'total_size' => (int) $request->validated('dztotalfilesize'),
+                'original_name' => (string) $request->validated('name'),
+            ],
+            'admin:'.$admin->getKey(),
+            static fn (Product $lockedProduct) => abort_unless(
+                $lockedProduct->product_type === 'digital',
+                404,
+            ),
+            null,
+            'Digital product file changed by administrator.',
+        );
 
         if (! $result['complete']) {
             return response()->json([
@@ -111,11 +72,9 @@ class AdminDigitalProductFileController extends Controller implements HasMiddlew
         ProductFile $file,
         ProductModerationService $moderation,
     ): JsonResponse {
-        $disk = (string) config('products.digital_upload.disk', 'local');
-        $path = (string) $file->path;
-        abort_unless($this->isSafeProductPath($path), 422, 'Unsafe stored file path.');
+        $disk = (string) config('products.digital_upload.disk', 'private');
 
-        DB::transaction(function () use ($product, $file, $moderation): void {
+        $path = DB::transaction(function () use ($product, $file, $moderation): string {
             $lockedProduct = Product::query()
                 ->whereKey($product->getKey())
                 ->lockForUpdate()
@@ -127,6 +86,8 @@ class AdminDigitalProductFileController extends Controller implements HasMiddlew
                 ->where('product_id', $lockedProduct->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
+            $path = (string) $lockedFile->path;
+            abort_unless($this->isSafeProductPath($path), 422, 'Unsafe stored file path.');
             $lockedFile->delete();
 
             $moderation->markForReview(
@@ -134,7 +95,9 @@ class AdminDigitalProductFileController extends Controller implements HasMiddlew
                 null,
                 'Digital product file removed by administrator.',
             );
-        });
+
+            return $path;
+        }, 5);
 
         Storage::disk($disk)->delete($path);
 

@@ -17,9 +17,11 @@ use App\Models\Store;
 use App\Models\Tag;
 use App\Services\AlertService;
 use App\Services\ProductContentSanitizer;
+use App\Services\ProductMediaStorageService;
 use App\Services\ProductModerationService;
-use App\Traits\FileUploadTrait;
+use App\Services\ProductSlugConflictDetector;
 use Illuminate\Contracts\View\View;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controllers\HasMiddleware;
 use Illuminate\Routing\Controllers\Middleware;
@@ -30,8 +32,6 @@ use Illuminate\Validation\ValidationException;
 
 class ProductController extends Controller implements HasMiddleware
 {
-    use FileUploadTrait;
-
     public static function Middleware(): array
     {
         return [
@@ -60,12 +60,14 @@ class ProductController extends Controller implements HasMiddleware
     public function store(
         ProductStoreRequest $request,
         string $type,
-        ProductModerationService $moderation
+        ProductModerationService $moderation,
+        ProductSlugConflictDetector $slugConflicts,
     ) {
         $reviewer = Auth::guard('admin')->user();
         abort_unless($reviewer instanceof Admin, 401);
 
-        $product = DB::transaction(function () use ($request, $type, $moderation, $reviewer) {
+        try {
+            $product = DB::transaction(function () use ($request, $type, $moderation, $reviewer) {
 
             if (! in_array($type, ['physical', 'digital'])) {
                 abort(404);
@@ -109,7 +111,16 @@ class ProductController extends Controller implements HasMiddleware
             abort_if($review === null, 409, 'The product changed while it was being approved.');
 
             return $product;
-        });
+            });
+        } catch (QueryException $exception) {
+            if (! $slugConflicts->causedByProductSlug($exception)) {
+                throw $exception;
+            }
+
+            throw ValidationException::withMessages([
+                'slug' => 'The product slug has already been taken.',
+            ]);
+        }
 
         if ($type == 'physical') {
             return response()->json([
@@ -194,15 +205,15 @@ class ProductController extends Controller implements HasMiddleware
     public function uploadImages(
         Request $request,
         Product $product,
-        ProductModerationService $moderation
+        ProductModerationService $moderation,
+        ProductMediaStorageService $mediaStorage,
     ) {
 
         $request->validate([
             'image' => ['required', 'image', 'max:3048'],
         ]);
 
-        $filePath = $this->uploadFile($request->file('image'));
-        abort_if($filePath === null, 422, 'The image could not be stored.');
+        $filePath = $mediaStorage->store($request->file('image'));
 
         try {
             $productImage = DB::transaction(function () use ($product, $filePath, $moderation) {
@@ -224,7 +235,7 @@ class ProductController extends Controller implements HasMiddleware
                 return $productImage;
             });
         } catch (\Throwable $exception) {
-            $this->deleteFile($filePath);
+            $mediaStorage->delete($filePath);
 
             throw $exception;
         }
@@ -232,19 +243,33 @@ class ProductController extends Controller implements HasMiddleware
         return response()->json([
             'status' => 'success',
             'id' => $productImage->id,
-            'path' => asset($filePath),
+            'path' => $productImage->controlledUrl(),
             'message' => 'Image uploaded successfully.',
         ]);
     }
 
-    public function destroyImage(int $id, ProductModerationService $moderation)
+    public function destroyImage(
+        int $id,
+        ProductModerationService $moderation,
+        ProductMediaStorageService $mediaStorage,
+    )
     {
-        $image = ProductImage::findOrFail($id);
-        $product = Product::findOrFail($image->product_id);
-        $path = $image->path;
+        $candidate = ProductImage::query()
+            ->select(['id', 'product_id'])
+            ->findOrFail($id);
+        $productId = (int) $candidate->product_id;
 
-        DB::transaction(function () use ($image, $product, $moderation): void {
-            $product = Product::query()->whereKey($product->getKey())->lockForUpdate()->firstOrFail();
+        $path = DB::transaction(function () use ($id, $productId, $moderation): string {
+            $product = Product::query()
+                ->whereKey($productId)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $image = ProductImage::query()
+                ->whereKey($id)
+                ->where('product_id', $product->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+            $path = (string) $image->path;
             $image->delete();
 
             $this->recordAdminMaterialChange(
@@ -252,9 +277,11 @@ class ProductController extends Controller implements HasMiddleware
                 $moderation,
                 'Product image deleted by an administrator.'
             );
-        });
 
-        $this->deleteFile($path);
+            return $path;
+        }, 5);
+
+        $mediaStorage->delete($path);
 
         return response()->json(['status' => 'success', 'message' => 'Image deleted successfully.']);
     }
@@ -284,12 +311,29 @@ class ProductController extends Controller implements HasMiddleware
 
         $product = Product::findOrFail((int) $productIds->first());
 
-        DB::transaction(function () use ($validated, $storedImages, $product, $moderation): void {
-            $product = Product::query()->whereKey($product->getKey())->lockForUpdate()->firstOrFail();
+        DB::transaction(function () use ($validated, $imageIds, $product, $moderation): void {
+            $product = Product::query()
+                ->whereKey($product->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+            $lockedImages = ProductImage::query()
+                ->where('product_id', $product->getKey())
+                ->whereIn('id', $imageIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->keyBy(fn (ProductImage $image): int => (int) $image->getKey());
+
+            if ($lockedImages->count() !== $imageIds->count()) {
+                throw ValidationException::withMessages([
+                    'images' => 'One or more images no longer belong to this product.',
+                ]);
+            }
+
             $changed = false;
 
             foreach ($validated['images'] as $image) {
-                $storedImage = $storedImages->get((int) $image['id']);
+                $storedImage = $lockedImages->get((int) $image['id']);
 
                 if ((int) $storedImage->order === (int) $image['order']) {
                     continue;
@@ -306,7 +350,7 @@ class ProductController extends Controller implements HasMiddleware
                     'Product images reordered by an administrator.'
                 );
             }
-        });
+        }, 5);
 
         return response()->noContent();
     }
@@ -314,12 +358,14 @@ class ProductController extends Controller implements HasMiddleware
     public function update(
         ProductUpdateRequest $request,
         int $id,
-        ProductModerationService $moderation
+        ProductModerationService $moderation,
+        ProductSlugConflictDetector $slugConflicts,
     ) {
         $reviewer = Auth::guard('admin')->user();
         abort_unless($reviewer instanceof Admin, 401);
 
-        $product = DB::transaction(function () use ($request, $id, $moderation, $reviewer) {
+        try {
+            $product = DB::transaction(function () use ($request, $id, $moderation, $reviewer) {
             $product = Product::query()->whereKey($id)->lockForUpdate()->firstOrFail();
             $expectedVersion = (int) $request->validated('moderation_version');
             abort_if(
@@ -388,7 +434,16 @@ class ProductController extends Controller implements HasMiddleware
             }
 
             return $product;
-        });
+            });
+        } catch (QueryException $exception) {
+            if (! $slugConflicts->causedByProductSlug($exception)) {
+                throw $exception;
+            }
+
+            throw ValidationException::withMessages([
+                'slug' => 'The product slug has already been taken.',
+            ]);
+        }
 
         AlertService::created();
 
@@ -425,13 +480,18 @@ class ProductController extends Controller implements HasMiddleware
             $isUpdate = filled($attributeId);
 
             if ($isUpdate) {
-                $belongsToProduct = DB::table('product_attribute_values')
+                $attribute = Attribute::query()
+                    ->whereKey($attributeId)
+                    ->lockForUpdate()
+                    ->firstOrFail();
+                $association = DB::table('product_attribute_values')
                     ->where('product_id', $product->id)
                     ->where('attribute_id', $attributeId)
-                    ->exists();
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->first(['id']);
 
-                abort_unless($belongsToProduct, 404);
-                $attribute = Attribute::findOrFail($attributeId);
+                abort_if($association === null, 404);
                 $this->assertAttributeIsNotSharedWithAnotherProduct($attribute, $product);
             } else {
                 $attribute = new Attribute;
@@ -488,19 +548,22 @@ class ProductController extends Controller implements HasMiddleware
             $valueId = $valueIds[$index] ?? null;
 
             if ($valueId) {
-                $belongsToProduct = DB::table('product_attribute_values')
+                $association = DB::table('product_attribute_values')
                     ->where('product_id', $product->id)
                     ->where('attribute_id', $attribute->id)
                     ->where('attribute_value_id', $valueId)
-                    ->exists();
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->first(['id']);
 
-                abort_unless($belongsToProduct, 404);
-                $this->assertAttributeValueIsNotSharedWithAnotherProduct((int) $valueId, $product);
+                abort_if($association === null, 404);
 
                 $attributeValue = AttributeValue::query()
                     ->whereKey($valueId)
                     ->where('attribute_id', $attribute->id)
+                    ->lockForUpdate()
                     ->firstOrFail();
+                $this->assertAttributeValueIsNotSharedWithAnotherProduct((int) $valueId, $product);
             } else {
                 $attributeValue = new AttributeValue;
                 $attributeValue->attribute_id = $attribute->id;
@@ -525,6 +588,8 @@ class ProductController extends Controller implements HasMiddleware
         $removedValueIds = DB::table('product_attribute_values')
             ->where('product_id', $product->id)
             ->where('attribute_id', $attribute->id)
+            ->orderBy('id')
+            ->lockForUpdate()
             ->pluck('attribute_value_id')
             ->diff($savedValueIds);
 
@@ -535,9 +600,15 @@ class ProductController extends Controller implements HasMiddleware
                 ->whereIn('attribute_value_id', $removedValueIds)
                 ->delete();
 
-            AttributeValue::query()
+            $orphanedValueIds = AttributeValue::query()
                 ->whereIn('id', $removedValueIds)
                 ->whereNotIn('id', DB::table('product_attribute_values')->select('attribute_value_id'))
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->pluck('id');
+
+            AttributeValue::query()
+                ->whereIn('id', $orphanedValueIds)
                 ->delete();
         }
 
@@ -548,13 +619,15 @@ class ProductController extends Controller implements HasMiddleware
         Attribute $attribute,
         Product $product
     ): void {
-        $isShared = DB::table('product_attribute_values')
+        $sharedAssociation = DB::table('product_attribute_values')
             ->where('attribute_id', $attribute->getKey())
             ->where('product_id', '!=', $product->getKey())
-            ->exists();
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->first(['id']);
 
         abort_if(
-            $isShared,
+            $sharedAssociation !== null,
             403,
             'This attribute is shared with another product and cannot be edited.'
         );
@@ -564,13 +637,15 @@ class ProductController extends Controller implements HasMiddleware
         int $attributeValueId,
         Product $product
     ): void {
-        $isShared = DB::table('product_attribute_values')
+        $sharedAssociation = DB::table('product_attribute_values')
             ->where('attribute_value_id', $attributeValueId)
             ->where('product_id', '!=', $product->getKey())
-            ->exists();
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->first(['id']);
 
         abort_if(
-            $isShared,
+            $sharedAssociation !== null,
             403,
             'This attribute value is shared with another product and cannot be edited.'
         );
@@ -583,13 +658,19 @@ class ProductController extends Controller implements HasMiddleware
     ) {
         return DB::transaction(function () use ($product, $attribute, $moderation) {
             $product = Product::query()->whereKey($product->getKey())->lockForUpdate()->firstOrFail();
+            $attribute = Attribute::query()
+                ->whereKey($attribute->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
             // Elimina todos los valores asociados en la tabla pivot para este producto y atributo
-            $belongsToProduct = DB::table('product_attribute_values')
+            $association = DB::table('product_attribute_values')
                 ->where('product_id', $product->id)
                 ->where('attribute_id', $attribute->id)
-                ->exists();
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->first(['id']);
 
-            abort_unless($belongsToProduct, 404);
+            abort_if($association === null, 404);
 
             DB::table('product_attribute_values')
                 ->where('product_id', $product->id)
@@ -597,13 +678,22 @@ class ProductController extends Controller implements HasMiddleware
                 ->delete();
 
             // (Opcional) Si el atributo ya no está asociado a ningún producto, elimínalo por completo
-            $isUsedElsewhere = DB::table('product_attribute_values')
+            $otherAssociation = DB::table('product_attribute_values')
                 ->where('attribute_id', $attribute->id)
-                ->exists();
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->first(['id']);
 
-            if (! $isUsedElsewhere) {
+            if ($otherAssociation === null) {
                 // Primero borra sus valores
-                AttributeValue::where('attribute_id', $attribute->id)->delete();
+                $attributeValues = AttributeValue::query()
+                    ->where('attribute_id', $attribute->id)
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->get();
+                AttributeValue::query()
+                    ->whereIn('id', $attributeValues->modelKeys())
+                    ->delete();
                 // Luego borra el atributo
                 $attribute->delete();
             }
@@ -713,35 +803,37 @@ class ProductController extends Controller implements HasMiddleware
             ],
         ]);
 
-        // Garantiza que la variante pertenezca al producto actual.
-        $variant = $product->variants()
-            ->whereKey($validated['variant_id'])
-            ->firstOrFail();
-
-        $variant->sku = $validated['variant_sku'] ?? null;
-        $variant->price = $validated['variant_price'];
-        $variant->special_price = $validated['variant_special_price'] ?? null;
-        $variant->manage_stock = $validated['variant_manage_stock'];
-
-        $variant->qty = $validated['variant_manage_stock']
-            ? ($validated['variant_quantity'] ?? 0)
-            : null;
-
-        $variant->in_stock =
-            $validated['variant_stock_status'] === 'in_stock';
-
-        $variant->is_default = $validated['variant_is_default'];
-        $variant->is_active = $validated['variant_is_active'];
-
-        $hasMaterialChanges = $variant->isDirty();
-
-        DB::transaction(function () use (
-            $variant,
-            $hasMaterialChanges,
+        $variant = DB::transaction(function () use (
+            $validated,
             $product,
             $moderation
-        ): void {
-            $product = Product::query()->whereKey($product->getKey())->lockForUpdate()->firstOrFail();
+        ): ProductVariant {
+            $product = Product::query()
+                ->whereKey($product->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+            $variant = $product->variants()
+                ->whereKey($validated['variant_id'])
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $variant->sku = $validated['variant_sku'] ?? null;
+            $variant->price = $validated['variant_price'];
+            $variant->special_price = $validated['variant_special_price'] ?? null;
+            $variant->manage_stock = $validated['variant_manage_stock'];
+
+            $variant->qty = $validated['variant_manage_stock']
+                ? ($validated['variant_quantity'] ?? 0)
+                : null;
+
+            $variant->in_stock =
+                $validated['variant_stock_status'] === 'in_stock';
+
+            $variant->is_default = $validated['variant_is_default'];
+            $variant->is_active = $validated['variant_is_active'];
+
+            $hasMaterialChanges = $variant->isDirty();
+
             $variant->save();
 
             if ($hasMaterialChanges) {
@@ -751,7 +843,9 @@ class ProductController extends Controller implements HasMiddleware
                     'Product variant changed by an administrator.'
                 );
             }
-        });
+
+            return $variant;
+        }, 5);
 
         return response()->json([
             'status' => 'success',
@@ -769,7 +863,17 @@ class ProductController extends Controller implements HasMiddleware
 
     public function clearExistingVariants(Product $product)
     {
-        foreach ($product->variants as $variant) {
+        $variants = $product->variants()
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($variants as $variant) {
+            DB::table('product_variant_attribute_value')
+                ->where('product_variant_id', $variant->id)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get(['id']);
             DB::table('product_variant_attribute_value')
                 ->where('product_variant_id', $variant->id)
                 ->delete();
@@ -782,12 +886,19 @@ class ProductController extends Controller implements HasMiddleware
     {
         $groupedAttributes = DB::table('product_attribute_values')
             ->where('product_id', $product->id)
-            ->get()->groupBy('attribute_id');
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get()
+            ->groupBy('attribute_id');
 
         $attributeGroups = collect();
 
         foreach ($groupedAttributes as $attributeId => $items) {
-            $attributeValues = AttributeValue::whereIn('id', $items->pluck('attribute_value_id'))->get();
+            $attributeValues = AttributeValue::query()
+                ->whereIn('id', $items->pluck('attribute_value_id'))
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
             $attributeGroups->push($attributeValues);
         }
 

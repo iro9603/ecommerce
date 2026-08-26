@@ -1,58 +1,84 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Ecommerce Laravel
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Aplicación de comercio electrónico con catálogo público, panel vendor, panel administrativo y moderación versionada de Store y Product.
 
-## About Laravel
+## Estado de validación
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+La remediación técnica y de seguridad fue validada el 24 de agosto de 2026 con:
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+- suite focal de seguridad: **152 tests, 936 aserciones, 0 fallos**;
+- migración fresca y upgrade desde un esquema representativo de `origin/main`: **2 tests, 67 aserciones**;
+- regresiones admin de slug y KYC: **10 tests, 47 aserciones**.
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+La suite global conserva 16 fallos históricos ajenos a este cierre. El detalle y la clasificación están en [Pruebas](docs/product-moderation/testing.md); no se declara la suite global completamente verde.
 
-## Learning Laravel
+## Documentación del dominio
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+- [Índice de moderación y seguridad](docs/product-moderation/README.md)
+- [Arquitectura Product](docs/product-moderation/architecture.md)
+- [Moderación Store](docs/store-moderation.md)
+- [Cambios de seguridad](docs/product-moderation/security-changes.md)
+- [Operación y despliegue](docs/product-moderation/operations.md)
+- [Pruebas y criterios de aceptación](docs/product-moderation/testing.md)
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## Arranque local
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+Requisitos: Docker, Laravel Sail, Composer y Node.js.
 
 ```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+cp .env.example .env
+composer install
+npm install
+./vendor/bin/sail up -d
+./vendor/bin/sail artisan key:generate
+./vendor/bin/sail artisan migrate
+npm run dev
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+Para procesar moderación asíncrona:
 
-## Contributing
+```bash
+./vendor/bin/sail artisan queue:work --queue=default --tries=3 --timeout=150
+```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+El scheduler debe ejecutar `security:reconcile-eligibility` cada hora. En producción use una sola instancia del scheduler o un backend de locks compatible con `onOneServer()`.
 
-## Code of Conduct
+## Configuración obligatoria de storage
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+Los archivos digitales y las imágenes Product no admiten degradación a un disco público:
 
-## Security Vulnerabilities
+```dotenv
+PRODUCT_DIGITAL_UPLOAD_DISK=private
+PRODUCT_DIGITAL_ALLOWED_DISKS=private
+PRODUCT_MEDIA_DISK=private
+PRODUCT_MEDIA_ALLOWED_DISKS=private
+```
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+El disco permitido debe ser privado, no servido directamente y configurado con errores de escritura fail-fast. Las imágenes Product se entregan mediante una ruta controlada que vuelve a comprobar publicación, ownership o permiso administrativo.
 
-## License
+## Contratos de seguridad
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+- Una aprobación Store representa exactamente una `moderation_version` revisada.
+- Una aprobación Product representa exactamente una versión de contenido; cambios de KYC, email, tipo de seller o confianza cambian epochs de elegibilidad, no la versión de contenido.
+- Los jobs deciden sólo si versión, fingerprint de contenido y hash de contexto siguen coincidiendo bajo lock.
+- `Product::published()` es obligatorio para todo consumidor público.
+- KYC vencido, `is_active = false`, tipo Product desconocido y grants con pins obsoletos fallan cerrados.
+- Store/Product restore nunca recupera aprobación o confianza anterior.
+- Los archivos digitales y media Product se almacenan fuera de `public/`.
+- HTML permitido se sanitiza antes de persistir y vuelve a protegerse en el render.
+
+SQL directo, imports y escrituras con eventos deshabilitados pueden saltar servicios y observers. Esas operaciones requieren una invalidación explícita y las mismas pruebas de seguridad.
+
+## Pruebas
+
+```bash
+./vendor/bin/sail artisan test tests/Feature/Security tests/Unit/Security --compact
+./vendor/bin/sail artisan test tests/Feature/Database/ModerationMigrationCompatibilityTest.php --compact
+./vendor/bin/sail artisan test --compact
+```
+
+Antes de desplegar, siga el orden de [Operación y despliegue](docs/product-moderation/operations.md), incluya todos los archivos nuevos del working tree en el artefacto y ejecute los backfills requeridos. Este repositorio no debe desplegarse copiando únicamente archivos ya tracked mientras existan fuentes nuevas sin incluir en el commit de release.
+
+## Licencia
+
+Este proyecto usa Laravel, distribuido bajo licencia MIT. Revise la política de licencia del producto antes de redistribuir el código de la aplicación.

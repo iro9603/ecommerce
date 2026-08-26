@@ -6,6 +6,13 @@ use App\Models\Product;
 
 class ProductRiskEvaluator
 {
+    private ?SellerEligibilityService $eligibility = null;
+
+    public function __construct(?SellerEligibilityService $eligibility = null)
+    {
+        $this->eligibility = $eligibility ?? app(SellerEligibilityService::class);
+    }
+
     /**
      * @return array{
      *     score: int,
@@ -26,15 +33,35 @@ class ProductRiskEvaluator
         if (! $product->store) {
             $this->addReason($reasons, 'missing_store', 100, 'The product does not belong to a store.');
         } else {
-            if ($product->store->status !== 'approved') {
+            $storeEligibility = $this->eligibility()->storeSnapshot($product->store);
+
+            if ($storeEligibility['store_status'] !== 'approved') {
                 $this->addReason($reasons, 'store_not_approved', 100, 'The store is not approved.');
             }
 
-            if ($product->store->suspended_at !== null) {
+            if (! $storeEligibility['store_not_suspended']) {
                 $this->addReason($reasons, 'store_suspended', 100, 'The store is suspended.');
             }
 
-            if (! $product->store->auto_approve_products) {
+            if (! $storeEligibility['store_is_active']) {
+                $this->addReason(
+                    $reasons,
+                    'store_selling_disabled',
+                    100,
+                    'The store is not enabled for selling.'
+                );
+            }
+
+            if (! $storeEligibility['store_review_is_current']) {
+                $this->addReason(
+                    $reasons,
+                    'store_review_not_current',
+                    100,
+                    'The current store content has not been approved.'
+                );
+            }
+
+            if (! $storeEligibility['auto_approval_grant_current']) {
                 $this->addReason(
                     $reasons,
                     'store_requires_manual_review',
@@ -48,7 +75,7 @@ class ProductRiskEvaluator
             if (! $seller) {
                 $this->addReason($reasons, 'missing_seller', 100, 'The store does not have a seller.');
             } else {
-                if ($seller->user_type !== 'vendor') {
+                if ($storeEligibility['seller_user_type'] !== 'vendor') {
                     $this->addReason(
                         $reasons,
                         'seller_not_vendor',
@@ -57,17 +84,28 @@ class ProductRiskEvaluator
                     );
                 }
 
-                if (! $seller->email_verified_at) {
+                if (! $storeEligibility['seller_email_verified']) {
                     $this->addReason($reasons, 'seller_email_not_verified', 60, 'The seller email is not verified.');
                 }
 
-                if ($seller->kyc?->status !== 'approved') {
+                if ($storeEligibility['kyc_status'] !== 'approved') {
                     $this->addReason($reasons, 'seller_kyc_not_approved', 100, 'The seller KYC is not approved.');
+                } elseif ($storeEligibility['kyc_expires_on'] === null) {
+                    $this->addReason($reasons, 'seller_kyc_expiry_missing', 100, 'The seller KYC has no expiration date.');
+                } elseif (! $storeEligibility['kyc_eligible']) {
+                    $this->addReason($reasons, 'seller_kyc_expired', 100, 'The seller KYC document has expired.');
                 }
             }
         }
 
-        if ($product->product_type === 'digital') {
+        if (! in_array($product->product_type, ['physical', 'digital'], true)) {
+            $this->addReason(
+                $reasons,
+                'unknown_product_type',
+                100,
+                'The product type is not supported.'
+            );
+        } elseif ($product->product_type === 'digital') {
             $this->addReason(
                 $reasons,
                 'digital_product_requires_manual_review',
@@ -220,5 +258,10 @@ class ProductRiskEvaluator
             $score >= 21 => 'medium',
             default => 'low',
         };
+    }
+
+    private function eligibility(): SellerEligibilityService
+    {
+        return $this->eligibility ??= app(SellerEligibilityService::class);
     }
 }

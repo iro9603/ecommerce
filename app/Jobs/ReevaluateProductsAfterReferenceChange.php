@@ -25,7 +25,7 @@ class ReevaluateProductsAfterReferenceChange implements ShouldQueue
 
     public function handle(ProductModerationService $moderation): void
     {
-        Product::query()
+        Product::withTrashed()
             ->whereIn('id', $this->productIds)
             ->orderBy('id')
             ->each(fn (Product $product) => $moderation->markForReview(

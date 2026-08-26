@@ -134,6 +134,7 @@ Route::middleware('auth:admin')
             ->middleware('throttle:300,1')
             ->name('digital-products.file.upload');
         Route::delete('/products/digital/{product}/{file}', [AdminDigitalProductFileController::class, 'destroy'])
+            ->scopeBindings()
             ->name('digital-products.file.destroy');
         Route::delete('/products/{product}', [ProductController::class, 'destroy'])->name('products.destroy');
 

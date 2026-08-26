@@ -9,8 +9,9 @@ use App\Models\ProductImage;
 use App\Models\ProductVariant;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Spatie\Permission\Models\Permission;
 use Tests\Support\ProductSecurityFixtures;
@@ -35,40 +36,38 @@ function approvedProductForAdminMutation(): array
 
 test('an admin image upload creates a new manually approved moderation version', function () {
     Queue::fake();
+    Storage::fake('private');
     $fixture = approvedProductForAdminMutation();
-    $storedPath = null;
 
-    try {
-        $response = $this
-            ->actingAs($fixture['admin'], 'admin')
-            ->postJson(route('admin.products.images.upload', $fixture['product']), [
-                'image' => UploadedFile::fake()->image('product.png'),
-            ]);
+    $response = $this
+        ->actingAs($fixture['admin'], 'admin')
+        ->postJson(route('admin.products.images.upload', $fixture['product']), [
+            'image' => UploadedFile::fake()->image('product.png'),
+        ]);
 
-        $response->assertOk()->assertJsonPath('status', 'success');
-        $storedPath = parse_url($response->json('path'), PHP_URL_PATH);
-        $product = $fixture['product']->fresh();
-        $review = ProductApprovalReview::query()
-            ->where('product_id', $product->getKey())
-            ->where('version', 2)
-            ->sole();
+    $response->assertOk()->assertJsonPath('status', 'success');
+    $product = $fixture['product']->fresh();
+    $storedImage = ProductImage::query()->where('product_id', $product->getKey())->sole();
+    $review = ProductApprovalReview::query()
+        ->where('product_id', $product->getKey())
+        ->where('version', 2)
+        ->sole();
 
-        expect($product->approved_status)->toBe(Product::APPROVAL_APPROVED)
-            ->and($product->moderation_version)->toBe(2)
-            ->and($product->reviewed_version)->toBe(2)
-            ->and($product->approved_by)->toBe($fixture['admin']->getKey())
-            ->and($review->status)->toBe(ProductApprovalReview::STATUS_APPROVED)
-            ->and($review->source)->toBe(ProductApprovalReview::SOURCE_MANUAL)
-            ->and($review->reviewed_by)->toBe($fixture['admin']->getKey());
-    } finally {
-        if (is_string($storedPath)) {
-            File::delete(public_path(ltrim($storedPath, '/')));
-        }
-    }
+    expect($response->json('path'))->toBe($storedImage->controlledUrl())
+        ->and(Storage::disk('private')->exists($storedImage->path))->toBeTrue()
+        ->and(file_exists(public_path($storedImage->path)))->toBeFalse()
+        ->and($product->approved_status)->toBe(Product::APPROVAL_APPROVED)
+        ->and($product->moderation_version)->toBe(2)
+        ->and($product->reviewed_version)->toBe(2)
+        ->and($product->approved_by)->toBe($fixture['admin']->getKey())
+        ->and($review->status)->toBe(ProductApprovalReview::STATUS_APPROVED)
+        ->and($review->source)->toBe(ProductApprovalReview::SOURCE_MANUAL)
+        ->and($review->reviewed_by)->toBe($fixture['admin']->getKey());
 });
 
 test('admin image reorder and deletion each create a manually approved version', function () {
     Queue::fake();
+    Storage::fake('private');
     $fixture = approvedProductForAdminMutation();
     $first = ProductImage::forceCreate([
         'product_id' => $fixture['product']->getKey(),
@@ -80,6 +79,8 @@ test('admin image reorder and deletion each create a manually approved version',
         'path' => 'uploads/products/second.png',
         'order' => 2,
     ]);
+    Storage::disk('private')->put($first->path, 'first image');
+    Storage::disk('private')->put($second->path, 'second image');
 
     $this
         ->actingAs($fixture['admin'], 'admin')
@@ -118,11 +119,72 @@ test('admin image reorder and deletion each create a manually approved version',
         ->sole();
 
     expect(ProductImage::find($first->getKey()))->toBeNull()
+        ->and(Storage::disk('private')->exists($first->path))->toBeFalse()
+        ->and(Storage::disk('private')->exists($second->path))->toBeTrue()
         ->and($product->approved_status)->toBe(Product::APPROVAL_APPROVED)
         ->and($product->moderation_version)->toBe(3)
         ->and($product->reviewed_version)->toBe(3)
         ->and($deleteReview->source)->toBe(ProductApprovalReview::SOURCE_MANUAL)
         ->and($deleteReview->reviewed_by)->toBe($fixture['admin']->getKey());
+});
+
+test('admin image deletion fails closed when the child is reassigned after its pre-read', function () {
+    Queue::fake();
+    Storage::fake('private');
+    $fixture = approvedProductForAdminMutation();
+    $otherVendor = ProductSecurityFixtures::vendor();
+    $otherProduct = ProductSecurityFixtures::product($otherVendor['store'], [
+        'approved_status' => Product::APPROVAL_APPROVED,
+        'moderation_version' => 1,
+        'reviewed_version' => 1,
+        'approved_at' => now(),
+    ]);
+    $path = 'uploads/toctou-'.bin2hex(random_bytes(8)).'.png';
+    Storage::disk('private')->put($path, 'test image');
+    $image = ProductImage::forceCreate([
+        'product_id' => $fixture['product']->getKey(),
+        'path' => $path,
+        'order' => 1,
+    ]);
+    $eventName = 'eloquent.retrieved: '.ProductImage::class;
+    $reassigned = false;
+
+    Event::listen($eventName, function (ProductImage $retrieved) use (
+        $image,
+        $otherProduct,
+        &$reassigned
+    ): void {
+        if ($reassigned || ! $retrieved->is($image)) {
+            return;
+        }
+
+        $reassigned = true;
+        DB::table('product_images')
+            ->where('id', $retrieved->getKey())
+            ->update(['product_id' => $otherProduct->getKey()]);
+    });
+
+    try {
+        $response = $this
+            ->actingAs($fixture['admin'], 'admin')
+            ->deleteJson(route('admin.products.images.destroy', $image));
+    } finally {
+        Event::forget($eventName);
+    }
+
+    $response->assertNotFound();
+    $this->assertDatabaseHas('product_images', [
+        'id' => $image->getKey(),
+        'product_id' => $otherProduct->getKey(),
+        'path' => $path,
+    ]);
+
+    expect($reassigned)->toBeTrue()
+        ->and(Storage::disk('private')->exists($path))->toBeTrue()
+        ->and($fixture['product']->fresh()->moderation_version)->toBe(1)
+        ->and($fixture['product']->fresh()->approved_status)->toBe(Product::APPROVAL_APPROVED)
+        ->and($otherProduct->fresh()->moderation_version)->toBe(1)
+        ->and($otherProduct->fresh()->approved_status)->toBe(Product::APPROVAL_APPROVED);
 });
 
 test('an admin variant update creates a new manually approved moderation version', function () {

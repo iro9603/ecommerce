@@ -3,6 +3,7 @@
 use App\Models\Admin;
 use App\Models\Kyc;
 use App\Models\User;
+use Spatie\Permission\Models\Permission;
 
 beforeEach(function () {
     $this->admin = Admin::forceCreate([
@@ -11,6 +12,7 @@ beforeEach(function () {
         'email_verified_at' => now(),
         'password' => 'password',
     ]);
+    $this->admin->givePermissionTo(Permission::findOrCreate('KYC Management', 'admin'));
 
     $user = User::factory()->create();
 
@@ -28,6 +30,7 @@ beforeEach(function () {
         'document_type' => 'passport',
         'document_number' => 'TEST-123',
         'document_country' => 'MX',
+        'document_expiry_date' => now()->addYear()->toDateString(),
         'document_front_path' => 'kyc/test/front.pdf',
     ]);
 });
@@ -106,6 +109,21 @@ test('an unsupported kyc status is rejected', function () {
             'status' => 'verified',
         ])
         ->assertSessionHasErrors('status');
+
+    expect($this->kyc->fresh()->status)->toBe('pending');
+});
+
+test('an admin cannot approve a kyc request with an expired document', function () {
+    $this->kyc->forceFill([
+        'document_expiry_date' => now()->subDay()->toDateString(),
+    ])->saveQuietly();
+
+    $this
+        ->actingAs($this->admin, 'admin')
+        ->put(route('admin.kyc.update', $this->kyc), [
+            'status' => 'approved',
+        ])
+        ->assertSessionHasErrors('document_expiry_date');
 
     expect($this->kyc->fresh()->status)->toBe('pending');
 });

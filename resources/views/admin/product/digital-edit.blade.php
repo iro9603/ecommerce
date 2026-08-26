@@ -329,7 +329,7 @@
                                     <div id="imagePreviewContainer" class="image-preview-container">
                                         @foreach ($product?->images ?? [] as $image)
                                             <div class = "image-preview-item" data-image-id = "{{ $image->id }}">
-                                                <img src = "{{ asset($image->path) }}">
+                                                <img src = "{{ $image->controlledUrl() }}">
                                                 <span class="remove-image"
                                                     data-image-id="{{ $image->id }}">&times;</span>
                                             </div>

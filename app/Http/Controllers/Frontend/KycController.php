@@ -19,7 +19,9 @@ class KycController extends Controller
 
     public function index(): View | RedirectResponse
     {
-        if (auth('web')->user()->kyc?->status == 'approved' || auth('web')->user()->kyc?->status == 'pending') {
+        $kyc = auth('web')->user()->kyc;
+
+        if ($kyc?->isEligibleAt() || $kyc?->status === 'pending') {
             return redirect()->route('vendor.dashboard');
         }
 
@@ -42,7 +44,7 @@ class KycController extends Controller
             'document_type' => ['required', 'in:id_card,passport,driving_license'],
             'document_number' => ['required', 'max:255', 'string'],
             'document_country' => ['required', 'alpha', 'size:2'],
-            'document_expiry_date' => ['nullable', 'date_format:d/m/Y'],
+            'document_expiry_date' => ['required', 'date_format:d/m/Y', 'after_or_equal:today'],
             'document_front' => ['required', 'file', 'mimes:jpg,jpeg,png,pdf', 'max:10000'],
             'document_back' => [
                 'required_unless:document_type,passport',

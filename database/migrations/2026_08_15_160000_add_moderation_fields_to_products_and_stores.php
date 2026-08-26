@@ -38,11 +38,16 @@ return new class extends Migration
         // trusted as having reviewed the current content. Require a fresh
         // review instead of silently grandfathering potentially unsafe HTML.
         DB::table('products')
+            ->select('id')
             ->where('approved_status', 'approved')
-            ->update([
-                'approved_status' => 'pending',
-                'moderation_reason' => 'Security review required after enabling versioned moderation.',
-            ]);
+            ->chunkById(500, static function ($products): void {
+                DB::table('products')
+                    ->whereIn('id', $products->pluck('id')->all())
+                    ->update([
+                        'approved_status' => 'pending',
+                        'moderation_reason' => 'Security review required after enabling versioned moderation.',
+                    ]);
+            });
     }
 
     public function down(): void

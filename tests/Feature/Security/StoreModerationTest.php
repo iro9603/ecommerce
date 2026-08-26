@@ -2,10 +2,14 @@
 
 use App\Models\Product;
 use App\Models\Store;
+use App\Models\StoreApprovalReview;
 use App\Jobs\EvaluateProductApprovalContext;
 use App\Services\ProductModerationService;
+use App\Services\StoreModerationService;
+use App\Services\StoreStateTransitionPolicy;
 use Illuminate\Support\Facades\Queue;
 use Spatie\Permission\Models\Permission;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 use Tests\Support\ProductSecurityFixtures;
 
 function storeManagementPermission(): Permission
@@ -154,6 +158,12 @@ test('rejecting a store requires a reason and fail-closes its approved products'
     $moderation = app(ProductModerationService::class);
     $review = $moderation->submit($product, $vendor['user'], 'Initial submission.');
     $moderation->approve($product, null, 'Approved by admin.', $review->version);
+    app(StoreModerationService::class)->submitForReview(
+        $vendor['store'],
+        $vendor['user'],
+        'Store content changed and requires another review.',
+    );
+    $vendor['store']->refresh();
 
     $this
         ->actingAs($admin, 'admin')
@@ -211,7 +221,7 @@ test('a suspended store can be reactivated by the admin', function () {
 
     $this
         ->actingAs($admin, 'admin')
-        ->post(route('admin.stores.approve', $vendor['store']), [
+        ->post(route('admin.stores.restore', $vendor['store']), [
             'moderation_version' => (int) $vendor['store']->moderation_version,
         ])
         ->assertRedirect();
@@ -293,3 +303,157 @@ test('a stale admin approval cannot decide a newer store version', function () {
         ->and((int) $store->fresh()->moderation_version)->toBe(2);
 });
 
+test('store submissions accept every domain-policy origin', function (string $origin) {
+    $vendor = ProductSecurityFixtures::vendor(storeOverrides: [
+        'status' => $origin,
+        'is_active' => $origin === Store::STATUS_APPROVED,
+        'approved_at' => $origin === Store::STATUS_APPROVED ? now() : null,
+        'suspended_at' => $origin === Store::STATUS_SUSPENDED ? now() : null,
+    ]);
+
+    $review = app(StoreModerationService::class)->submitForReview(
+        $vendor['store'],
+        $vendor['user'],
+        'Material store content was submitted.',
+    );
+
+    $store = $vendor['store']->fresh();
+
+    expect($review)->toBeInstanceOf(StoreApprovalReview::class)
+        ->and($review->status)->toBe(StoreApprovalReview::STATUS_PENDING)
+        ->and($store->status)->toBe(Store::STATUS_PENDING)
+        ->and((int) $store->moderation_version)->toBe(2);
+})->with([
+    'draft' => Store::STATUS_DRAFT,
+    'pending' => Store::STATUS_PENDING,
+    'rejected' => Store::STATUS_REJECTED,
+    'approved' => Store::STATUS_APPROVED,
+]);
+
+test('store decisions accept every domain-policy origin', function (
+    string $action,
+    string $origin,
+    string $target,
+    string $reviewStatus,
+) {
+    $vendor = ProductSecurityFixtures::vendor(storeOverrides: [
+        'status' => $origin,
+        'is_active' => $origin === Store::STATUS_APPROVED,
+        'approved_at' => $origin === Store::STATUS_APPROVED ? now() : null,
+        'suspended_at' => $origin === Store::STATUS_SUSPENDED ? now() : null,
+    ]);
+    $admin = ProductSecurityFixtures::admin();
+    $store = $vendor['store'];
+    $version = (int) $store->moderation_version;
+    $moderation = app(StoreModerationService::class);
+
+    $review = match ($action) {
+        StoreStateTransitionPolicy::ACTION_APPROVE => $moderation->approve($store, $admin, $version),
+        StoreStateTransitionPolicy::ACTION_REJECT => $moderation->reject($store, $admin, 'Rejected by domain-policy test.', $version),
+        StoreStateTransitionPolicy::ACTION_SUSPEND => $moderation->suspend($store, $admin, 'Suspended by domain-policy test.', $version),
+        StoreStateTransitionPolicy::ACTION_RESTORE => $moderation->restore($store, $admin, $version),
+    };
+
+    $store->refresh();
+
+    expect($review)->toBeInstanceOf(StoreApprovalReview::class)
+        ->and($review->status)->toBe($reviewStatus)
+        ->and($store->status)->toBe($target)
+        ->and((int) $store->moderation_version)->toBe($version);
+})->with([
+    'approve pending' => [
+        StoreStateTransitionPolicy::ACTION_APPROVE,
+        Store::STATUS_PENDING,
+        Store::STATUS_APPROVED,
+        StoreApprovalReview::STATUS_APPROVED,
+    ],
+    'reject pending' => [
+        StoreStateTransitionPolicy::ACTION_REJECT,
+        Store::STATUS_PENDING,
+        Store::STATUS_REJECTED,
+        StoreApprovalReview::STATUS_REJECTED,
+    ],
+    'suspend approved' => [
+        StoreStateTransitionPolicy::ACTION_SUSPEND,
+        Store::STATUS_APPROVED,
+        Store::STATUS_SUSPENDED,
+        StoreApprovalReview::STATUS_SUSPENDED,
+    ],
+    'restore suspended' => [
+        StoreStateTransitionPolicy::ACTION_RESTORE,
+        Store::STATUS_SUSPENDED,
+        Store::STATUS_APPROVED,
+        StoreApprovalReview::STATUS_RESTORED,
+    ],
+]);
+
+test('invalid store transition origins leave the database unchanged', function (
+    string $action,
+    string $origin,
+) {
+    $vendor = ProductSecurityFixtures::vendor(storeOverrides: [
+        'status' => $origin,
+        'is_active' => $origin === Store::STATUS_APPROVED,
+        'approved_at' => $origin === Store::STATUS_APPROVED ? now() : null,
+        'suspended_at' => $origin === Store::STATUS_SUSPENDED ? now() : null,
+    ]);
+    $admin = ProductSecurityFixtures::admin();
+    $store = $vendor['store']->fresh();
+    $before = $store->getRawOriginal();
+    $reviewCount = StoreApprovalReview::query()->where('store_id', $store->getKey())->count();
+    $version = (int) $store->moderation_version;
+    $moderation = app(StoreModerationService::class);
+
+    $transition = fn () => match ($action) {
+        StoreStateTransitionPolicy::ACTION_SUBMIT => $moderation->submitForReview($store, $vendor['user'], 'Invalid submission origin.'),
+        StoreStateTransitionPolicy::ACTION_APPROVE => $moderation->approve($store, $admin, $version),
+        StoreStateTransitionPolicy::ACTION_REJECT => $moderation->reject($store, $admin, 'Invalid rejection origin.', $version),
+        StoreStateTransitionPolicy::ACTION_SUSPEND => $moderation->suspend($store, $admin, 'Invalid suspension origin.', $version),
+        StoreStateTransitionPolicy::ACTION_RESTORE => $moderation->restore($store, $admin, $version),
+    };
+
+    expect($transition)->toThrow(ConflictHttpException::class);
+
+    expect($store->fresh()->getRawOriginal())->toBe($before)
+        ->and(StoreApprovalReview::query()->where('store_id', $store->getKey())->count())->toBe($reviewCount);
+})->with([
+    'submit from suspended' => [StoreStateTransitionPolicy::ACTION_SUBMIT, Store::STATUS_SUSPENDED],
+    'approve from approved' => [StoreStateTransitionPolicy::ACTION_APPROVE, Store::STATUS_APPROVED],
+    'reject from rejected' => [StoreStateTransitionPolicy::ACTION_REJECT, Store::STATUS_REJECTED],
+    'suspend from pending' => [StoreStateTransitionPolicy::ACTION_SUSPEND, Store::STATUS_PENDING],
+    'restore from pending' => [StoreStateTransitionPolicy::ACTION_RESTORE, Store::STATUS_PENDING],
+]);
+
+test('stale store decisions leave the database unchanged', function (
+    string $action,
+    string $origin,
+) {
+    $vendor = ProductSecurityFixtures::vendor(storeOverrides: [
+        'status' => $origin,
+        'is_active' => $origin === Store::STATUS_APPROVED,
+        'approved_at' => $origin === Store::STATUS_APPROVED ? now() : null,
+        'suspended_at' => $origin === Store::STATUS_SUSPENDED ? now() : null,
+    ]);
+    $admin = ProductSecurityFixtures::admin();
+    $store = $vendor['store']->fresh();
+    $before = $store->getRawOriginal();
+    $reviewCount = StoreApprovalReview::query()->where('store_id', $store->getKey())->count();
+    $staleVersion = (int) $store->moderation_version - 1;
+    $moderation = app(StoreModerationService::class);
+
+    $review = match ($action) {
+        StoreStateTransitionPolicy::ACTION_APPROVE => $moderation->approve($store, $admin, $staleVersion),
+        StoreStateTransitionPolicy::ACTION_REJECT => $moderation->reject($store, $admin, 'Stale rejection.', $staleVersion),
+        StoreStateTransitionPolicy::ACTION_SUSPEND => $moderation->suspend($store, $admin, 'Stale suspension.', $staleVersion),
+        StoreStateTransitionPolicy::ACTION_RESTORE => $moderation->restore($store, $admin, $staleVersion),
+    };
+
+    expect($review)->toBeNull()
+        ->and($store->fresh()->getRawOriginal())->toBe($before)
+        ->and(StoreApprovalReview::query()->where('store_id', $store->getKey())->count())->toBe($reviewCount);
+})->with([
+    'stale approve' => [StoreStateTransitionPolicy::ACTION_APPROVE, Store::STATUS_PENDING],
+    'stale reject' => [StoreStateTransitionPolicy::ACTION_REJECT, Store::STATUS_PENDING],
+    'stale suspend' => [StoreStateTransitionPolicy::ACTION_SUSPEND, Store::STATUS_APPROVED],
+    'stale restore' => [StoreStateTransitionPolicy::ACTION_RESTORE, Store::STATUS_SUSPENDED],
+]);

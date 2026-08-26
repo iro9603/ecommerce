@@ -1,6 +1,8 @@
 <?php
 
 return [
+    'policy_version' => '2026-08-24.1',
+
     /*
      * Automatic approval is still opt-in per store. Disabling this switch
      * forces every otherwise eligible submission into the manual queue.

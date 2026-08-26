@@ -1,5 +1,5 @@
 @forelse ($variants as $variant)
-    @include('vendor.product.partials.variant', [
+    @include('vendor-dashboard.product.partials.variant', [
         'variant' => $variant,
     ])
 @empty

@@ -7,6 +7,7 @@ use App\Models\Product;
 use App\Models\Store;
 use App\Models\User;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\Event;
 use Spatie\Permission\Models\Permission;
 
 beforeEach(function () {
@@ -78,6 +79,20 @@ function productUpdatePayload(Product $product, array $overrides = []): array
     ], $overrides);
 }
 
+function productSlugRaceException(): QueryException
+{
+    $message = "Duplicate entry 'race-slug' for key 'products.products_slug_unique'";
+    $previous = new \PDOException($message, 23000);
+    $previous->errorInfo = ['23000', 1062, $message];
+
+    return new QueryException(
+        'mysql',
+        'update products set slug = ? where id = ?',
+        ['race-slug', 1],
+        $previous,
+    );
+}
+
 test('an admin can update a product slug', function () {
     $product = productForSlugTest('Linear Algebra Done Right', 'linear-algebra-done-right');
 
@@ -112,6 +127,33 @@ test('the database prevents product slug races from creating duplicates', functi
 
     expect(fn () => productForSlugTest('Concurrent Product', 'database-unique-product'))
         ->toThrow(QueryException::class);
+});
+
+test('a product slug constraint race becomes a slug validation response only', function () {
+    $product = productForSlugTest('Race Product', 'race-product');
+    $eventName = 'eloquent.updating: '.Product::class;
+
+    Event::listen($eventName, static function (Product $updating) use ($product): void {
+        if ($updating->is($product) && $updating->slug === 'race-slug') {
+            throw productSlugRaceException();
+        }
+    });
+
+    try {
+        $response = $this
+            ->actingAs($this->admin, 'admin')
+            ->postJson(route('admin.products.update', $product), productUpdatePayload($product, [
+                'slug' => 'race-slug',
+            ]));
+    } finally {
+        Event::forget($eventName);
+    }
+
+    $response
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('slug');
+
+    expect($product->fresh()->slug)->toBe('race-product');
 });
 
 test('a stale admin review cannot overwrite a newer product version', function () {
