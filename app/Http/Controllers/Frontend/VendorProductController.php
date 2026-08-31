@@ -139,7 +139,7 @@ class VendorProductController extends Controller
         $tags = Tag::select(['name', 'id'])->get();
         $categories = Category::getNested();
 
-        $attributesWithValues = $product->attributeWithValues ?? [];
+        $attributesWithValues = $product->groupedAttributeValues();
         $variants = $product?->variants ?? [];
 
         return view('vendor-dashboard.product.edit', compact('brands', 'tags', 'categories', 'product', 'productCategoryIds', 'productTagIds', 'attributesWithValues', 'variants'));

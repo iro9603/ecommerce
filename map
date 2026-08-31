@@ -1,0 +1,3 @@
+resources/views/frontend/pages/show.blade.php:93:                                <input type="hidden" id="variants-data"
+resources/views/frontend/pages/show.blade.php:95:                                        $product->variants->map(function ($variant) {
+resources/views/frontend/pages/show.blade.php:839:            const variantsData = JSON.parse($('#variants-data').val());

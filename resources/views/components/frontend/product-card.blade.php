@@ -2,64 +2,47 @@
     <div class="product-cart-wrap mb-30">
         <div class="product-img-action-wrap">
             <div class="product-img product-img-zoom">
-                <a href="{{ route('products.show', $product->slug) }}">
-                    @foreach ($product->images as $key => $image)
+                <a href="{{ route('products.show', $product->slug) }}" aria-label="{{ $product->name }}">
+                    @forelse ($product->images as $key => $image)
                         <img class="{{ $key == 0 ? 'default-img' : 'hover-img' }}" src="{{ $image->controlledUrl() }}"
-                            alt="" />
-                    @endforeach
-                    {{-- <img class="hover-img" src="assets/imgs/shop/product-1-2.jpg" alt="" /> --}}
+                            alt="{{ $product->name }}" loading="lazy" />
+                    @empty
+                        <img class="default-img" src="{{ asset('assets/frontend/dist/imgs/shop/product-1-1.jpg') }}"
+                            alt="{{ $product->name }}" loading="lazy" />
+                    @endforelse
                 </a>
             </div>
-            <div class="product-action-1">
-                <a aria-label="Add To Wishlist" class="action-btn" href="shop-wishlist.html"><i
-                        class="fi-rs-heart"></i></a>
-                <a aria-label="Compare" class="action-btn" href="shop-compare.html"><i class="fi-rs-shuffle"></i></a>
-                <a aria-label="Quick view" class="action-btn" data-bs-toggle="modal" data-bs-target="#quickViewModal"><i
-                        class="fi-rs-eye"></i></a>
-            </div>
             <div class="product-badges product-badges-position product-badges-mrg">
-                @if ($product->is_hot == 1)
+                @if ($product->is_hot)
                     <span class="hot">Hot</span>
                 @endif
-                @if ($product->is_new == 1)
-                    <span class="new ms-1 ">new</span>
+                @if ($product->is_new)
+                    <span class="new ms-1">New</span>
                 @endif
             </div>
         </div>
         <div class="product-content-wrap">
-            <div class="product-category">
-                {{--  <a href="shop-grid-right.html">{{ $product->category }}</a> --}}
-            </div>
             <h2><a href="{{ route('products.show', $product->slug) }}">{{ $product->name }}</a></h2>
-            <div class="product-rate-cover">
-                <div class="product-rate d-inline-block">
-                    <div class="product-rating" style="width: 90%"></div>
-                </div>
-                <span class="font-small ml-5 text-muted"> (4.0)</span>
-            </div>
             <div>
-                <span class="font-small text-muted">By <a
-                        href="vendor-details-1.html">{{ $product->store->name }}</a></span>
+                <span class="font-small text-muted">By {{ $product->store?->name }}</span>
             </div>
-            @php
-                $regularPrice = $product->primaryVariant?->price ?? $product->price;
-                $specialPrice = $product->primaryVariant?->special_price ?? $product->special_price;
-                $hasSpecialPrice = is_numeric($specialPrice) && (float) $specialPrice > 0;
-            @endphp
+            @php($cardPricing = $product->primaryVariant?->pricing() ?? $product->pricing())
             <div class="product-card-bottom">
                 <div class="product-price">
-                    @if ($hasSpecialPrice)
-                        <span>${{ number_format((float) $specialPrice, 2, '.', ',') }}</span>
-                        @if (is_numeric($regularPrice))
-                            <span class="old-price">${{ number_format((float) $regularPrice, 2, '.', ',') }}</span>
+                    @if ($cardPricing['effective_price'] !== null)
+                        @if ($cardPricing['has_active_special'])
+                            <span>{{ $product->currencySymbol() }}{{ number_format((float) $cardPricing['effective_price'], 2, '.', ',') }}</span>
+                            <span
+                                class="old-price">{{ $product->currencySymbol() }}{{ number_format((float) $cardPricing['regular_price'], 2, '.', ',') }}</span>
+                        @else
+                            <span>{{ $product->currencySymbol() }}{{ number_format((float) $cardPricing['effective_price'], 2, '.', ',') }}</span>
                         @endif
-                    @elseif (is_numeric($regularPrice))
-                        <span>${{ number_format((float) $regularPrice, 2, '.', ',') }}</span>
+                    @else
+                        <span class="text-muted">Precio no disponible</span>
                     @endif
                 </div>
                 <div class="add-cart">
-                    <a class="add" href="shop-cart.html"><i class="fi-rs-shopping-cart mr-5"></i>Add
-                    </a>
+                    <a class="add" href="shop-cart.html"><i class="fi-rs-shopping-cart mr-5"></i>Add </a>
                 </div>
             </div>
         </div>

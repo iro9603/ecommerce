@@ -6,6 +6,7 @@ use App\Jobs\EvaluateProductForApproval;
 use App\Jobs\EvaluateProductApprovalContext;
 use App\Models\Admin;
 use App\Models\Product;
+use App\Models\ProductVariant;
 use App\Models\ProductApprovalReview;
 use App\Models\ProductModerationEvent;
 use App\Models\Store;
@@ -501,6 +502,8 @@ class ProductModerationService
     ): void {
         $decisionReason = 'Automatically approved after passing the product risk evaluation.';
 
+        $this->ensureSingleActiveDefaultVariant($product);
+
         $product->forceFill([
             'approved_status' => Product::APPROVAL_APPROVED,
             'reviewed_version' => $expectedVersion,
@@ -518,6 +521,27 @@ class ProductModerationService
             'decision_reason' => $decisionReason,
             'reviewed_at' => now(),
         ]);
+    }
+
+    private function ensureSingleActiveDefaultVariant(Product $product): void
+    {
+        $variants = $product->variants()
+            ->orderBy('position')
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        $defaults = $variants
+            ->filter(fn (ProductVariant $variant): bool => $variant->is_active && $variant->is_default)
+            ->sortBy([
+                ['position', 'asc'],
+                ['id', 'asc'],
+            ])
+            ->values();
+
+        foreach ($defaults->skip(1) as $duplicate) {
+            $duplicate->forceFill(['is_default' => false])->save();
+        }
     }
 
     private function keepPendingAfterAssessment(
@@ -551,6 +575,8 @@ class ProductModerationService
             $expectedVersion
         ): ?ProductApprovalReview {
             $current = Product::query()->whereKey($product->getKey())->lockForUpdate()->firstOrFail();
+
+            $this->ensureSingleActiveDefaultVariant($current);
 
             if (
                 $expectedVersion !== null

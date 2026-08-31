@@ -150,7 +150,7 @@ class ProductController extends Controller implements HasMiddleware
         $tags = Tag::select(['name', 'id'])->get();
         $categories = Category::getNested();
 
-        $attributesWithValues = $product->attributeWithValues ?? [];
+        $attributesWithValues = $product->groupedAttributeValues();
         $variants = $product?->variants ?? [];
 
         return view('admin.product.edit', compact('stores', 'brands', 'tags', 'categories', 'product', 'productCategoryIds', 'productTagIds', 'attributesWithValues', 'variants'));

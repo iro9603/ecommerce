@@ -1,10 +1,170 @@
 @extends('frontend.layouts.app')
 
+@push('styles')
+    <style>
+        .product-detail .attr-detail {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .product-detail .attr-detail strong {
+            display: inline-block;
+            min-width: 52px;
+            width: auto;
+            margin-top: 7px;
+            font-size: 14px;
+            color: #253d4e;
+        }
+
+        .product-detail .attribute-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+
+        .product-detail .attribute-badge {
+            margin: 0;
+            padding: 0;
+        }
+
+        .product-detail .attribute-option {
+            min-width: 42px;
+            height: 40px;
+            padding: 8px 14px;
+            border: 1px solid #dce3e8;
+            border-radius: 8px;
+            background: #fff;
+            color: #253d4e;
+            font-size: 14px;
+            font-weight: 600;
+            line-height: 1;
+            cursor: pointer;
+            transition: border-color .15s ease, background-color .15s ease, color .15s ease, box-shadow .15s ease;
+        }
+
+        .product-detail .attribute-option:hover {
+            border-color: #3bb77e;
+            color: #253d4e;
+            box-shadow: 0 4px 12px rgba(59, 183, 126, .10);
+        }
+
+        .product-detail .attribute-option.active {
+            border-color: #3bb77e;
+            background: #e9f9f0;
+            color: #1d8a57;
+            box-shadow: 0 0 0 2px rgba(59, 183, 126, .12);
+        }
+
+        .product-detail .attribute-option.color-swatch {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 40px;
+            min-width: 40px;
+            height: 40px;
+            padding: 0;
+            border-radius: 50%;
+            border: 2px solid #dce3e8;
+            background-clip: padding-box;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .product-detail .attribute-option.color-swatch.active {
+            border-color: #253d4e;
+            box-shadow: 0 0 0 2px #fff, 0 0 0 4px #3bb77e;
+        }
+
+        .product-detail .attribute-option.color-swatch.active::after {
+            content: "\f00c";
+            font-family: "Font Awesome 6 Free";
+            font-weight: 900;
+            font-size: 14px;
+            color: #fff;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, .35);
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .product-detail .detail-qty {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+            min-height: 52px;
+            padding: 7px 12px;
+        }
+
+        .product-detail .detail-qty input[type="number"] {
+            width: 48px;
+            border: 0;
+            outline: 0;
+            text-align: center;
+            font-weight: 700;
+            color: #253d4e;
+            -moz-appearance: textfield;
+        }
+
+        .product-detail .detail-qty input[type="number"]::-webkit-inner-spin-button,
+        .product-detail .detail-qty input[type="number"]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .product-detail .qty-controls {
+            display: inline-flex;
+            flex-direction: column;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .product-detail .detail-qty button.qty-down,
+        .product-detail .detail-qty button.qty-up {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            border: 1px solid #dce3e8;
+            background: #f7f9fa;
+            color: #3bb77e;
+            font-size: 14px;
+            line-height: 1;
+            cursor: pointer;
+            transition: border-color .15s ease, background-color .15s ease;
+        }
+
+        .product-detail .detail-qty button.qty-down:hover,
+        .product-detail .detail-qty button.qty-up:hover {
+            border-color: #3bb77e;
+            background: #e9f9f0;
+        }
+
+        .product-detail .detail-qty input[type="number"]:disabled,
+        .product-detail .detail-qty button:disabled {
+            cursor: not-allowed;
+            opacity: .45;
+        }
+
+        .product-detail .button-add-to-cart:disabled {
+            cursor: not-allowed;
+            opacity: .55;
+            box-shadow: none;
+        }
+    </style>
+@endpush
+
 @section('contents')
     <x-frontend.breadcrumb :items="[
         [
             'label' => 'Home',
-            'url' => '/',
+            'url' => route('home'),
         ],
         [
             'label' => 'Products',
@@ -14,111 +174,156 @@
     <div class="container mb-30">
         <div class="row">
             <div class="col-xl-12">
-                <div class="product-detail accordion-detail">
+                <div class="product-detail accordion-detail" id="product-detail"
+                    data-currency-symbol="{{ $product->currencySymbol() }}"
+                    data-can-purchase="{{ $product->canPurchase() ? 'true' : 'false' }}">
                     <div class="row mb-50 mt-70">
                         <div class="col-md-6 col-lg-5 col-sm-12 col-xs-12 mb-md-0 mb-sm-5">
                             <div class="detail-gallery">
                                 <span class="zoom-icon"><i class="fi-rs-search"></i></span>
                                 <!-- MAIN SLIDES -->
                                 <div class="product-image-slider">
-                                    @foreach ($product->images as $image)
+                                    @forelse ($product->images as $image)
                                         <figure class="border-radius-10">
-                                            <img src="{{ $image->controlledUrl() }}" alt=" product image" />
+                                            <img src="{{ $image->controlledUrl() }}" alt="{{ $product->name }}" />
                                         </figure>
-                                    @endforeach
-
+                                    @empty
+                                        <figure class="border-radius-10">
+                                            <img src="{{ asset('assets/frontend/dist/imgs/shop/product-1-1.jpg') }}"
+                                                alt="{{ $product->name }}" />
+                                        </figure>
+                                    @endforelse
                                 </div>
                                 <!-- THUMBNAILS -->
                                 <div class="slider-nav-thumbnails">
-                                    @foreach ($product->images as $image)
-                                        <div><img src="{{ $image->controlledUrl() }}" alt="product image" /></div>
-                                    @endforeach
+                                    @forelse ($product->images as $image)
+                                        <div><img src="{{ $image->controlledUrl() }}" alt="{{ $product->name }}" /></div>
+                                    @empty
+                                        <div><img src="{{ asset('assets/frontend/dist/imgs/shop/product-1-1.jpg') }}"
+                                                alt="{{ $product->name }}" /></div>
+                                    @endforelse
                                 </div>
                             </div>
                             <!-- End Gallery -->
                         </div>
                         <div class="col-md-6 col-lg-7 col-sm-12 col-xs-12">
                             <div class="detail-info pr-30 pl-30">
-                                <span class="stock-status out-stock"> Sale Off </span>
-                                <h2 class="title-detail">{{ $product->name }}</h2>
-                                <div class="product-detail-rating">
-                                    <div class="product-rate-cover text-end">
-                                        <div class="product-rate d-inline-block">
-                                            <div class="product-rating" style="width: 90%"></div>
-                                        </div>
-                                        <span class="font-small ml-5 text-muted"> (32 reviews)</span>
-                                    </div>
-                                </div>
+                                <span class="stock-status out-stock" id="product-stock-status" aria-live="polite">
+                                    {{ $product->canPurchase() ? 'In stock' : 'Agotado' }}
+                                </span>
+                                <h1 class="title-detail">{{ $product->name }}</h1>
+
                                 @php
-                                    $regularPrice = $product->primaryVariant?->price ?? $product->price;
-                                    $specialPrice = $product->primaryVariant?->special_price ?? $product->special_price;
-                                    $hasSpecialPrice = is_numeric($specialPrice) && (float) $specialPrice > 0;
+                                    $currencySymbol = $product->currencySymbol();
+                                    $regularPrice = $pricing['regular_price'];
+                                    $effectivePrice = $pricing['effective_price'];
                                 @endphp
+
                                 <div class="clearfix product-price-cover">
-                                    <div class="product-price primary-color float-left">
-                                        @if ($hasSpecialPrice)
-                                            <span class="current-price text-brand">${{ number_format((float) $specialPrice, 2, '.', ',') }}</span>
-                                            @if (is_numeric($regularPrice))
-                                                <span class="old-price font-md ml-15">${{ number_format((float) $regularPrice, 2, '.', ',') }}</span>
+                                    <div class="product-price primary-color float-left" id="product-price"
+                                        aria-live="polite">
+                                        @if ($effectivePrice !== null)
+                                            @if ($pricing['has_active_special'])
+                                                <span
+                                                    class="current-price text-brand">{{ $currencySymbol }}{{ number_format((float) $effectivePrice, 2, '.', ',') }}</span>
+                                                @if ($regularPrice !== null)
+                                                    <span
+                                                        class="old-price font-md ml-5">{{ $currencySymbol }}{{ number_format((float) $regularPrice, 2, '.', ',') }}</span>
+                                                @endif
+                                            @else
+                                                <span
+                                                    class="current-price text-brand">{{ $currencySymbol }}{{ number_format((float) $effectivePrice, 2, '.', ',') }}</span>
                                             @endif
-                                        @elseif (is_numeric($regularPrice))
-                                            <span class="current-price text-brand">${{ number_format((float) $regularPrice, 2, '.', ',') }}</span>
+                                        @else
+                                            <span class="current-price text-muted">Precio no disponible</span>
                                         @endif
                                     </div>
                                 </div>
+
                                 <div class="short-desc mb-30">
-                                    <div class="font-lg">{!! $safeShortDescriptionHtml !!}</div>
+                                    @if (!empty(trim((string) $safeShortDescriptionHtml)))
+                                        <div class="font-lg">{!! $safeShortDescriptionHtml !!}</div>
+                                    @else
+                                        <p class="text-muted">No description available.</p>
+                                    @endif
                                 </div>
-                                <div class="attr-detail attr-size mb-20">
-                                    <strong class="mr-10">Size: </strong>
-                                    <ul class="list-filter size-filter font-small">
-                                        <li class="active"><a href="#">S</a></li>
-                                        <li><a href="#">M</a></li>
-                                        <li><a href="#">L</a></li>
-                                        <li><a href="#">XL</a></li>
-                                        <li><a href="#">XXL</a></li>
-                                    </ul>
-                                </div>
-                                <div class="attr-detail attr-size mb-30">
-                                    <strong class="mr-10">Color: </strong>
-                                    <ul class="color_filter list-filter size-filter font-small">
-                                        <li><a href="#" style="background: #000;"></a></li>
-                                        <li class="active"><a href="#" style="background: #ff9010;"></a></li>
-                                        <li><a href="#" style="background: #1C63E5;"></a></li>
-                                        <li><a href="#" style="background: #3BB77E;"></a></li>
-                                        <li><a href="#" style="background: #f74b81;"></a></li>
-                                    </ul>
-                                </div>
-                                <div class="detail-extralink mb-50">
+
+                                @forelse ($attributeGroups as $attribute)
+                                    <div class="attr-detail attr-size mb-20">
+                                        <strong class="mr-10">{{ $attribute->name }}: </strong>
+                                        <ul class="attribute-group list-filter size-filter font-small"
+                                            data-attribute="{{ $attribute->id }}">
+                                            @foreach ($attribute->values as $value)
+                                                @if ($attribute->type === 'color')
+                                                    <li class="attribute-badge" data-value="{{ $value->id }}">
+                                                        <button type="button" class="attribute-option color-swatch"
+                                                            data-value="{{ $value->id }}"
+                                                            style="background: {{ $value->color ?: '#000000' }}"
+                                                            aria-label="{{ $value->value }}"></button>
+                                                    </li>
+                                                @else
+                                                    <li class="attribute-badge" data-value="{{ $value->id }}">
+                                                        <button type="button" class="attribute-option"
+                                                            data-value="{{ $value->id }}">{{ $value->value }}</button>
+                                                    </li>
+                                                @endif
+                                            @endforeach
+                                        </ul>
+                                    </div>
+                                @empty
+                                    <p class="text-muted">No attributes available.</p>
+                                @endforelse
+
+                                <script type="application/json" id="variants-data">@json($variantPayloads)</script>
+
+                                <div class="detail-extralink mb-50" id="product-actions">
                                     <div class="detail-qty border radius">
-                                        <a href="#" class="qty-down"><i class="fi-rs-angle-small-down"></i></a>
-                                        <input type="text" name="quantity" class="qty-val" value="1" min="1">
-                                        <a href="#" class="qty-up"><i class="fi-rs-angle-small-up"></i></a>
+                                        <input type="number" name="quantity" id="product-quantity" class="qty-val"
+                                            value="1" min="1" aria-label="Quantity" />
+                                        <div class="qty-controls" aria-hidden="false">
+                                            <button type="button" class="qty-up" aria-label="Increase quantity">
+                                                <i class="fi-rs-angle-small-up"></i>
+                                            </button>
+                                            <button type="button" class="qty-down" aria-label="Decrease quantity">
+                                                <i class="fi-rs-angle-small-down"></i>
+                                            </button>
+                                        </div>
                                     </div>
                                     <div class="product-extra-link2">
-                                        <button type="submit" class="button button-add-to-cart"><i
-                                                class="fi-rs-shopping-cart"></i>Add to cart</button>
-                                        <a aria-label="Add To Wishlist" class="action-btn hover-up"
-                                            href="shop-wishlist.html"><i class="fi-rs-heart"></i></a>
-                                        <a aria-label="Compare" class="action-btn hover-up" href="shop-compare.html"><i
-                                                class="fi-rs-shuffle"></i></a>
+                                        <button type="button" class="button button-add-to-cart" id="add-to-cart-button"
+                                            disabled aria-disabled="true" title="Cart is not available yet">
+                                            <i class="fi-rs-shopping-cart"></i>Add to cart
+                                        </button>
                                     </div>
                                 </div>
+
                                 <div class="font-xs">
                                     <ul class="mr-50 float-start">
-                                        <li class="mb-5">Type: <span class="text-brand">eCommerce</span></li>
-                                        <li class="mb-5">MFG:<span class="text-brand"> Jun 4.2024</span></li>
-                                        <li>LIFE: <span class="text-brand">70 days</span></li>
-                                    </ul>
-                                    <ul class="float-start">
-                                        <li class="mb-5">SKU: <a href="#">FWM15VKT</a></li>
-                                        <li class="mb-5">Tags:
-                                            @foreach ($product->tags as $tag)
-                                                <a href="#" rel="tag">{{ $tag->name }}</a>
-                                                {{ $loop->last ? '' : ', ' }}
-                                            @endforeach
+                                        <li class="mb-5">SKU:
+                                            <span
+                                                id="product-sku">{{ $defaultVariant?->sku ?: ($product->sku ?: 'N/A') }}</span>
                                         </li>
-                                        <li>Stock:<span class="in-stock text-brand ml-5">8 Items In Stock</span>
+                                        <li class="mb-5">Tags:
+                                            @forelse ($product->tags as $tag)
+                                                <span rel="tag">{{ $tag->name }}</span>
+                                                {{ $loop->last ? '' : ', ' }}
+                                            @empty
+                                                No tags
+                                            @endforelse
+                                        </li>
+                                        <li>Stock:
+                                            <span class="in-stock text-brand ml-5">
+                                                <span class="stock-qty" id="product-stock">
+                                                    @php($stockVariant = $defaultVariant)
+                                                    @if ($stockVariant && $stockVariant->managesStock())
+                                                        {{ $stockVariant->stockQuantity() }} in stock
+                                                    @elseif ($stockVariant || !$product->managesStock())
+                                                        {{ $product->canPurchase() ? 'In stock' : 'Agotado' }}
+                                                    @else
+                                                        {{ $product->stockQuantity() > 0 ? $product->stockQuantity() . ' in stock' : 'Agotado' }}
+                                                    @endif
+                                                </span>
+                                            </span>
                                         </li>
                                     </ul>
                                 </div>
@@ -126,6 +331,7 @@
                             <!-- Detail Info -->
                         </div>
                     </div>
+
                     <div class="product-info">
                         <div class="tab-style3">
                             <ul class="nav nav-tabs text-uppercase">
@@ -133,664 +339,57 @@
                                     <a class="nav-link active" id="Description-tab" data-bs-toggle="tab"
                                         href="#Description">Description</a>
                                 </li>
-                                {{-- <li class="nav-item">
-                                    <a class="nav-link" id="Additional-info-tab" data-bs-toggle="tab"
-                                        href="#Additional-info">Additional info</a>
-                                </li> --}}
                                 <li class="nav-item">
                                     <a class="nav-link" id="Vendor-info-tab" data-bs-toggle="tab"
                                         href="#Vendor-info">Vendor</a>
-                                </li>
-                                <li class="nav-item">
-                                    <a class="nav-link" id="Reviews-tab" data-bs-toggle="tab" href="#Reviews">Reviews
-                                        (3)</a>
                                 </li>
                             </ul>
                             <div class="tab-content shop_info_tab entry-main-content">
                                 <div class="tab-pane fade show active" id="Description">
                                     <div class="">
-                                        {!! $safeDescriptionHtml !!}
+                                        @if (!empty(trim((string) $safeDescriptionHtml)))
+                                            {!! $safeDescriptionHtml !!}
+                                        @else
+                                            <p class="text-muted">No description available.</p>
+                                        @endif
                                     </div>
                                 </div>
-                                {{-- <div class="tab-pane fade" id="Additional-info">
-                                    <table class="font-md">
-                                        <tbody>
-                                            <tr class="stand-up">
-                                                <th>Stand Up</th>
-                                                <td>
-                                                    <p>35″L x 24″W x 37-45″H(front to back wheel)</p>
-                                                </td>
-                                            </tr>
-                                            <tr class="folded-wo-wheels">
-                                                <th>Folded (w/o wheels)</th>
-                                                <td>
-                                                    <p>32.5″L x 18.5″W x 16.5″H</p>
-                                                </td>
-                                            </tr>
-                                            <tr class="folded-w-wheels">
-                                                <th>Folded (w/ wheels)</th>
-                                                <td>
-                                                    <p>32.5″L x 24″W x 18.5″H</p>
-                                                </td>
-                                            </tr>
-                                            <tr class="door-pass-through">
-                                                <th>Door Pass Through</th>
-                                                <td>
-                                                    <p>24</p>
-                                                </td>
-                                            </tr>
-                                            <tr class="frame">
-                                                <th>Frame</th>
-                                                <td>
-                                                    <p>Aluminum</p>
-                                                </td>
-                                            </tr>
-                                            <tr class="weight-wo-wheels">
-                                                <th>Weight (w/o wheels)</th>
-                                                <td>
-                                                    <p>20 LBS</p>
-                                                </td>
-                                            </tr>
-                                            <tr class="weight-capacity">
-                                                <th>Weight Capacity</th>
-                                                <td>
-                                                    <p>60 LBS</p>
-                                                </td>
-                                            </tr>
-                                            <tr class="width">
-                                                <th>Width</th>
-                                                <td>
-                                                    <p>24″</p>
-                                                </td>
-                                            </tr>
-                                            <tr class="handle-height-ground-to-handle">
-                                                <th>Handle height (ground to handle)</th>
-                                                <td>
-                                                    <p>37-45″</p>
-                                                </td>
-                                            </tr>
-                                            <tr class="wheels">
-                                                <th>Wheels</th>
-                                                <td>
-                                                    <p>12″ air / wide track slick tread</p>
-                                                </td>
-                                            </tr>
-                                            <tr class="seat-back-height">
-                                                <th>Seat back height</th>
-                                                <td>
-                                                    <p>21.5″</p>
-                                                </td>
-                                            </tr>
-                                            <tr class="head-room-inside-canopy">
-                                                <th>Head room (inside canopy)</th>
-                                                <td>
-                                                    <p>25″</p>
-                                                </td>
-                                            </tr>
-                                            <tr class="pa_color">
-                                                <th>Color</th>
-                                                <td>
-                                                    <p>Black, Blue, Red, White</p>
-                                                </td>
-                                            </tr>
-                                            <tr class="pa_size">
-                                                <th>Size</th>
-                                                <td>
-                                                    <p>M, S</p>
-                                                </td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div> --}}
                                 <div class="tab-pane fade" id="Vendor-info">
-                                    <div class="vendor-logo d-flex mb-30 align-items-center">
-                                        <img src="assets/imgs/vendor/vendor-3.png" alt="" />
-                                        <div class="vendor-name ml-15">
-                                            <h6>
-                                                <a href="vendor-details-2.html">Noodles Co.</a>
-                                            </h6>
-                                            <div class="product-rate-cover text-end">
-                                                <div class="product-rate d-inline-block">
-                                                    <div class="product-rating" style="width: 90%"></div>
-                                                </div>
-                                                <span class="font-small ml-5 text-muted"> (32 reviews)</span>
-                                            </div>
-                                        </div>
+                                    <div class="vendor-name mb-20">
+                                        <h6>{{ $product->store?->name }}</h6>
                                     </div>
-                                    <ul class="contact-infor mb-50">
-                                        <li><img src="assets/imgs/theme/icons/icon-location.svg"
-                                                alt="" /><strong>Address: </strong> <span>5171 W Campbell Ave
-                                                undefined Kent, Utah 53127 United States</span></li>
-                                        <li><img src="assets/imgs/theme/icons/icon-contact.svg"
-                                                alt="" /><strong>Contact Seller:</strong><span>(+91) -
-                                                540-025-553</span></li>
+                                    <ul class="contact-infor mb-30">
+                                        @if ($product->store?->address_line_1)
+                                            <li><strong>Address: </strong>
+                                                <span>{{ $product->store->address_line_1 }}</span>
+                                            </li>
+                                        @endif
+                                        @if ($product->store?->phone)
+                                            <li><strong>Phone: </strong><span>{{ $product->store->phone }}</span></li>
+                                        @endif
+                                        @if ($product->store?->email)
+                                            <li><strong>Email: </strong><span>{{ $product->store->email }}</span></li>
+                                        @endif
                                     </ul>
-                                    <div class="d-flex mb-55">
-                                        <div class="mr-30">
-                                            <p class="text-brand font-xs">Rating</p>
-                                            <h4 class="mb-0">92%</h4>
-                                        </div>
-                                        <div class="mr-30">
-                                            <p class="text-brand font-xs">Ship on time</p>
-                                            <h4 class="mb-0">100%</h4>
-                                        </div>
-                                        <div>
-                                            <p class="text-brand font-xs">Chat response</p>
-                                            <h4 class="mb-0">89%</h4>
-                                        </div>
-                                    </div>
-                                    <p>Noodles & Company is an American fast-casual restaurant that offers
-                                        international and American noodle dishes and pasta in addition to soups and
-                                        salads. Noodles & Company was founded in 1995 by Aaron Kennedy and is
-                                        headquartered in Broomfield, Colorado. The company went public in 2013 and
-                                        recorded a $457 million revenue in 2017.In late 2018, there were 460 Noodles
-                                        & Company locations across 29 states and Washington, D.C.</p>
-                                </div>
-                                <div class="tab-pane fade" id="Reviews">
-                                    <!--Comments-->
-                                    <div class="comments-area">
-                                        <div class="row">
-                                            <div class="col-lg-8">
-                                                <h4 class="mb-30">Customer questions & answers</h4>
-                                                <div class="comment-list">
-                                                    <div class="single-comment justify-content-between d-flex mb-30">
-                                                        <div class="user justify-content-between d-flex">
-                                                            <div class="thumb text-center">
-                                                                <img src="assets/imgs/blog/author-2.png" alt="" />
-                                                                <a href="#"
-                                                                    class="font-heading text-brand">Sienna</a>
-                                                            </div>
-                                                            <div class="desc">
-                                                                <div class="d-flex justify-content-between mb-10">
-                                                                    <div class="d-flex align-items-center">
-                                                                        <span class="font-xs text-muted">December 4,
-                                                                            2024 at 3:12 pm </span>
-                                                                    </div>
-                                                                    <div class="product-rate d-inline-block">
-                                                                        <div class="product-rating" style="width: 100%">
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
-                                                                <p class="mb-10">Lorem ipsum dolor sit amet,
-                                                                    consectetur adipisicing elit. Delectus, suscipit
-                                                                    exercitationem accusantium obcaecati quos
-                                                                    voluptate nesciunt facilis itaque modi commodi
-                                                                    dignissimos sequi repudiandae minus ab deleniti
-                                                                    totam officia id incidunt? <a href="#"
-                                                                        class="reply">Reply</a></p>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                    <div class="single-comment justify-content-between d-flex mb-30 ml-30">
-                                                        <div class="user justify-content-between d-flex">
-                                                            <div class="thumb text-center">
-                                                                <img src="assets/imgs/blog/author-3.png" alt="" />
-                                                                <a href="#"
-                                                                    class="font-heading text-brand">Brenna</a>
-                                                            </div>
-                                                            <div class="desc">
-                                                                <div class="d-flex justify-content-between mb-10">
-                                                                    <div class="d-flex align-items-center">
-                                                                        <span class="font-xs text-muted">December 4,
-                                                                            2024 at 3:12 pm </span>
-                                                                    </div>
-                                                                    <div class="product-rate d-inline-block">
-                                                                        <div class="product-rating" style="width: 80%">
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
-                                                                <p class="mb-10">Lorem ipsum dolor sit amet,
-                                                                    consectetur adipisicing elit. Delectus, suscipit
-                                                                    exercitationem accusantium obcaecati quos
-                                                                    voluptate nesciunt facilis itaque modi commodi
-                                                                    dignissimos sequi repudiandae minus ab deleniti
-                                                                    totam officia id incidunt? <a href="#"
-                                                                        class="reply">Reply</a></p>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                    <div class="single-comment justify-content-between d-flex">
-                                                        <div class="user justify-content-between d-flex">
-                                                            <div class="thumb text-center">
-                                                                <img src="assets/imgs/blog/author-4.png" alt="" />
-                                                                <a href="#"
-                                                                    class="font-heading text-brand">Gemma</a>
-                                                            </div>
-                                                            <div class="desc">
-                                                                <div class="d-flex justify-content-between mb-10">
-                                                                    <div class="d-flex align-items-center">
-                                                                        <span class="font-xs text-muted">December 4,
-                                                                            2024 at 3:12 pm </span>
-                                                                    </div>
-                                                                    <div class="product-rate d-inline-block">
-                                                                        <div class="product-rating" style="width: 80%">
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
-                                                                <p class="mb-10">Lorem ipsum dolor sit amet,
-                                                                    consectetur adipisicing elit. Delectus, suscipit
-                                                                    exercitationem accusantium obcaecati quos
-                                                                    voluptate nesciunt facilis itaque modi commodi
-                                                                    dignissimos sequi repudiandae minus ab deleniti
-                                                                    totam officia id incidunt? <a href="#"
-                                                                        class="reply">Reply</a></p>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div class="col-lg-4">
-                                                <h4 class="mb-30">Customer reviews</h4>
-                                                <div class="d-flex mb-30">
-                                                    <div class="product-rate d-inline-block mr-15">
-                                                        <div class="product-rating" style="width: 90%"></div>
-                                                    </div>
-                                                    <h6>4.8 out of 5</h6>
-                                                </div>
-                                                <div class="progress">
-                                                    <span>5 star</span>
-                                                    <div class="progress-bar" role="progressbar" style="width: 50%"
-                                                        aria-valuenow="50" aria-valuemin="0" aria-valuemax="100">50%
-                                                    </div>
-                                                </div>
-                                                <div class="progress">
-                                                    <span>4 star</span>
-                                                    <div class="progress-bar" role="progressbar" style="width: 25%"
-                                                        aria-valuenow="25" aria-valuemin="0" aria-valuemax="100">25%
-                                                    </div>
-                                                </div>
-                                                <div class="progress">
-                                                    <span>3 star</span>
-                                                    <div class="progress-bar" role="progressbar" style="width: 45%"
-                                                        aria-valuenow="45" aria-valuemin="0" aria-valuemax="100">45%
-                                                    </div>
-                                                </div>
-                                                <div class="progress">
-                                                    <span>2 star</span>
-                                                    <div class="progress-bar" role="progressbar" style="width: 65%"
-                                                        aria-valuenow="65" aria-valuemin="0" aria-valuemax="100">65%
-                                                    </div>
-                                                </div>
-                                                <div class="progress mb-30">
-                                                    <span>1 star</span>
-                                                    <div class="progress-bar" role="progressbar" style="width: 85%"
-                                                        aria-valuenow="85" aria-valuemin="0" aria-valuemax="100">85%
-                                                    </div>
-                                                </div>
-                                                <a href="#" class="font-xs text-muted">How are ratings
-                                                    calculated?</a>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <!--comment form-->
-                                    <div class="comment-form">
-                                        <h4 class="mb-15">Add a review</h4>
-                                        <div class="product-rate d-inline-block mb-30"></div>
-                                        <div class="row">
-                                            <div class="col-lg-8 col-md-12">
-                                                <form class="form-contact comment_form" action="#" id="commentForm">
-                                                    <div class="row">
-                                                        <div class="col-12">
-                                                            <div class="form-group">
-                                                                <textarea class="form-control w-100" name="comment" id="comment" cols="30" rows="9"
-                                                                    placeholder="Write Comment"></textarea>
-                                                            </div>
-                                                        </div>
-                                                        <div class="col-sm-6">
-                                                            <div class="form-group">
-                                                                <input class="form-control" name="name" id="name"
-                                                                    type="text" placeholder="Name" />
-                                                            </div>
-                                                        </div>
-                                                        <div class="col-sm-6">
-                                                            <div class="form-group">
-                                                                <input class="form-control" name="email" id="email"
-                                                                    type="email" placeholder="Email" />
-                                                            </div>
-                                                        </div>
-                                                        <div class="col-12">
-                                                            <div class="form-group">
-                                                                <input class="form-control" name="website" id="website"
-                                                                    type="text" placeholder="Website" />
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                    <div class="form-group">
-                                                        <button type="submit" class="button button-contactForm">Submit
-                                                            Review</button>
-                                                    </div>
-                                                </form>
-                                            </div>
-                                        </div>
-                                    </div>
+                                    <p>{!! $product->store?->long_description ?: $product->store?->short_description !!}</p>
                                 </div>
                             </div>
                         </div>
                     </div>
+
                     <div class="row mt-70">
                         <div class="col-12">
                             <h2 class="section-title style-1 mb-30">Related products</h2>
                         </div>
                         <div class="col-12">
                             <div class="row related-products">
-                                <div class="col-6 col-lg-4 col-xl-3 col-xxl-2">
-                                    <div class="product-cart-wrap mb-30 wow animate__animated animate__fadeIn"
-                                        data-wow-delay=".1s">
-                                        <div class="product-img-action-wrap">
-                                            <div class="product-img product-img-zoom">
-                                                <a href="#" tabindex="-1">
-                                                    <img class="default-img" src="assets/imgs/shop/product-1-1.jpg"
-                                                        alt="">
-                                                    <img class="hover-img" src="assets/imgs/shop/product-1-2.jpg"
-                                                        alt="">
-                                                </a>
-                                            </div>
-                                            <div class="product-action-1">
-                                                <a aria-label="Add To Wishlist" class="action-btn"
-                                                    href="shop-wishlist.html"><i class="fi-rs-heart"></i></a>
-                                                <a aria-label="Compare" class="action-btn" href="shop-compare.html"><i
-                                                        class="fi-rs-shuffle"></i></a>
-                                                <a aria-label="Quick view" class="action-btn" data-bs-toggle="modal"
-                                                    data-bs-target="#quickViewModal"><i class="fi-rs-eye"></i></a>
-                                            </div>
-                                            <div class="product-badges product-badges-position product-badges-mrg">
-                                                <span class="hot">Hot</span>
-                                            </div>
-                                        </div>
-                                        <div class="product-content-wrap">
-                                            <div class="product-category">
-                                                <a href="shop-grid-right.html">Clothing</a>
-                                            </div>
-                                            <h2><a href="#">Seeds of Change eCommerce Quinoa, Brown, &
-                                                    Red Rice</a></h2>
-                                            <div class="product-rate-cover">
-                                                <div class="product-rate d-inline-block">
-                                                    <div class="product-rating" style="width: 90%"></div>
-                                                </div>
-                                                <span class="font-small ml-5 text-muted"> (4.0)</span>
-                                            </div>
-                                            <div>
-                                                <span class="font-small text-muted">By <a
-                                                        href="vendor-details-1.html">ShopX</a></span>
-                                            </div>
-                                            <div class="product-card-bottom">
-                                                <div class="product-price">
-                                                    <span>$28.85</span>
-                                                    <span class="old-price">$32.8</span>
-                                                </div>
-                                                <div class="add-cart">
-                                                    <a class="add" href="shop-cart.html"><i
-                                                            class="fi-rs-shopping-cart mr-5"></i>Add </a>
-                                                </div>
-                                            </div>
-                                        </div>
+                                @forelse ($relatedProducts as $relatedProduct)
+                                    <x-frontend.product-card :product="$relatedProduct" />
+                                @empty
+                                    <div class="col-12">
+                                        <p class="text-muted">No related products found.</p>
                                     </div>
-                                </div>
-                                <!--end product card-->
-                                <div class="col-6 col-lg-4 col-xl-3 col-xxl-2">
-                                    <div class="product-cart-wrap mb-30 wow animate__animated animate__fadeIn"
-                                        data-wow-delay=".2s">
-                                        <div class="product-img-action-wrap">
-                                            <div class="product-img product-img-zoom">
-                                                <a href="#" tabindex="-1">
-                                                    <img class="default-img" src="assets/imgs/shop/product-2-1.jpg"
-                                                        alt="">
-                                                    <img class="hover-img" src="assets/imgs/shop/product-2-2.jpg"
-                                                        alt="">
-                                                </a>
-                                            </div>
-                                            <div class="product-action-1">
-                                                <a aria-label="Add To Wishlist" class="action-btn"
-                                                    href="shop-wishlist.html"><i class="fi-rs-heart"></i></a>
-                                                <a aria-label="Compare" class="action-btn" href="shop-compare.html"><i
-                                                        class="fi-rs-shuffle"></i></a>
-                                                <a aria-label="Quick view" class="action-btn" data-bs-toggle="modal"
-                                                    data-bs-target="#quickViewModal"><i class="fi-rs-eye"></i></a>
-                                            </div>
-                                            <div class="product-badges product-badges-position product-badges-mrg">
-                                                <span class="sale">Sale</span>
-                                            </div>
-                                        </div>
-                                        <div class="product-content-wrap">
-                                            <div class="product-category">
-                                                <a href="shop-grid-right.html">Gadgets</a>
-                                            </div>
-                                            <h2><a href="#">All Natural Italian-Style Chicken
-                                                    Meatballs</a></h2>
-                                            <div class="product-rate-cover">
-                                                <div class="product-rate d-inline-block">
-                                                    <div class="product-rating" style="width: 80%"></div>
-                                                </div>
-                                                <span class="font-small ml-5 text-muted"> (3.5)</span>
-                                            </div>
-                                            <div>
-                                                <span class="font-small text-muted">By <a
-                                                        href="vendor-details-1.html">Stouffer</a></span>
-                                            </div>
-                                            <div class="product-card-bottom">
-                                                <div class="product-price">
-                                                    <span>$52.85</span>
-                                                    <span class="old-price">$55.8</span>
-                                                </div>
-                                                <div class="add-cart">
-                                                    <a class="add" href="shop-cart.html"><i
-                                                            class="fi-rs-shopping-cart mr-5"></i>Add </a>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <!--end product card-->
-                                <div class="col-6 col-lg-4 col-xl-3 col-xxl-2">
-                                    <div class="product-cart-wrap mb-30 wow animate__animated animate__fadeIn"
-                                        data-wow-delay=".3s">
-                                        <div class="product-img-action-wrap">
-                                            <div class="product-img product-img-zoom">
-                                                <a href="#" tabindex="-1">
-                                                    <img class="default-img" src="assets/imgs/shop/product-3-1.jpg"
-                                                        alt="">
-                                                    <img class="hover-img" src="assets/imgs/shop/product-3-2.jpg"
-                                                        alt="">
-                                                </a>
-                                            </div>
-                                            <div class="product-action-1">
-                                                <a aria-label="Add To Wishlist" class="action-btn"
-                                                    href="shop-wishlist.html"><i class="fi-rs-heart"></i></a>
-                                                <a aria-label="Compare" class="action-btn" href="shop-compare.html"><i
-                                                        class="fi-rs-shuffle"></i></a>
-                                                <a aria-label="Quick view" class="action-btn" data-bs-toggle="modal"
-                                                    data-bs-target="#quickViewModal"><i class="fi-rs-eye"></i></a>
-                                            </div>
-                                            <div class="product-badges product-badges-position product-badges-mrg">
-                                                <span class="new">New</span>
-                                            </div>
-                                        </div>
-                                        <div class="product-content-wrap">
-                                            <div class="product-category">
-                                                <a href="shop-grid-right.html">Clothing</a>
-                                            </div>
-                                            <h2><a href="#">Angie’s Boomchickapop Sweet & Salty Kettle
-                                                    Corn</a></h2>
-                                            <div class="product-rate-cover">
-                                                <div class="product-rate d-inline-block">
-                                                    <div class="product-rating" style="width: 85%"></div>
-                                                </div>
-                                                <span class="font-small ml-5 text-muted"> (4.0)</span>
-                                            </div>
-                                            <div>
-                                                <span class="font-small text-muted">By <a
-                                                        href="vendor-details-1.html">StarKist</a></span>
-                                            </div>
-                                            <div class="product-card-bottom">
-                                                <div class="product-price">
-                                                    <span>$48.85</span>
-                                                    <span class="old-price">$52.8</span>
-                                                </div>
-                                                <div class="add-cart">
-                                                    <a class="add" href="shop-cart.html"><i
-                                                            class="fi-rs-shopping-cart mr-5"></i>Add </a>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <!--end product card-->
-                                <div class="col-6 col-lg-4 col-xl-3 col-xxl-2">
-                                    <div class="product-cart-wrap mb-30 wow animate__animated animate__fadeIn"
-                                        data-wow-delay=".4s">
-                                        <div class="product-img-action-wrap">
-                                            <div class="product-img product-img-zoom">
-                                                <a href="#" tabindex="-1">
-                                                    <img class="default-img" src="assets/imgs/shop/product-4-1.jpg"
-                                                        alt="">
-                                                    <img class="hover-img" src="assets/imgs/shop/product-4-2.jpg"
-                                                        alt="">
-                                                </a>
-                                            </div>
-                                            <div class="product-action-1">
-                                                <a aria-label="Add To Wishlist" class="action-btn"
-                                                    href="shop-wishlist.html"><i class="fi-rs-heart"></i></a>
-                                                <a aria-label="Compare" class="action-btn" href="shop-compare.html"><i
-                                                        class="fi-rs-shuffle"></i></a>
-                                                <a aria-label="Quick view" class="action-btn" data-bs-toggle="modal"
-                                                    data-bs-target="#quickViewModal"><i class="fi-rs-eye"></i></a>
-                                            </div>
-                                        </div>
-                                        <div class="product-content-wrap">
-                                            <div class="product-category">
-                                                <a href="shop-grid-right.html">Kid's Fashion</a>
-                                            </div>
-                                            <h2><a href="#">Foster Farms Takeout Crispy Classic
-                                                    Buffalo Wings</a></h2>
-                                            <div class="product-rate-cover">
-                                                <div class="product-rate d-inline-block">
-                                                    <div class="product-rating" style="width: 90%"></div>
-                                                </div>
-                                                <span class="font-small ml-5 text-muted"> (4.0)</span>
-                                            </div>
-                                            <div>
-                                                <span class="font-small text-muted">By <a
-                                                        href="vendor-details-1.html">ShopX</a></span>
-                                            </div>
-                                            <div class="product-card-bottom">
-                                                <div class="product-price">
-                                                    <span>$17.85</span>
-                                                    <span class="old-price">$19.8</span>
-                                                </div>
-                                                <div class="add-cart">
-                                                    <a class="add" href="shop-cart.html"><i
-                                                            class="fi-rs-shopping-cart mr-5"></i>Add </a>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <!--end product card-->
-                                <div class="col-6 col-lg-4 col-xl-3 col-xxl-2">
-                                    <div class="product-cart-wrap mb-30 wow animate__animated animate__fadeIn"
-                                        data-wow-delay=".5s">
-                                        <div class="product-img-action-wrap">
-                                            <div class="product-img product-img-zoom">
-                                                <a href="#" tabindex="-1">
-                                                    <img class="default-img" src="assets/imgs/shop/product-5-1.jpg"
-                                                        alt="">
-                                                    <img class="hover-img" src="assets/imgs/shop/product-5-2.jpg"
-                                                        alt="">
-                                                </a>
-                                            </div>
-                                            <div class="product-action-1">
-                                                <a aria-label="Add To Wishlist" class="action-btn"
-                                                    href="shop-wishlist.html"><i class="fi-rs-heart"></i></a>
-                                                <a aria-label="Compare" class="action-btn" href="shop-compare.html"><i
-                                                        class="fi-rs-shuffle"></i></a>
-                                                <a aria-label="Quick view" class="action-btn" data-bs-toggle="modal"
-                                                    data-bs-target="#quickViewModal"><i class="fi-rs-eye"></i></a>
-                                            </div>
-                                            <div class="product-badges product-badges-position product-badges-mrg">
-                                                <span class="best">-14%</span>
-                                            </div>
-                                        </div>
-                                        <div class="product-content-wrap">
-                                            <div class="product-category">
-                                                <a href="shop-grid-right.html">Shoes</a>
-                                            </div>
-                                            <h2><a href="#">Blue Diamond Almonds Lightly Salted
-                                                    Kid's Fashion</a></h2>
-                                            <div class="product-rate-cover">
-                                                <div class="product-rate d-inline-block">
-                                                    <div class="product-rating" style="width: 90%"></div>
-                                                </div>
-                                                <span class="font-small ml-5 text-muted"> (4.0)</span>
-                                            </div>
-                                            <div>
-                                                <span class="font-small text-muted">By <a
-                                                        href="vendor-details-1.html">ShopX</a></span>
-                                            </div>
-                                            <div class="product-card-bottom">
-                                                <div class="product-price">
-                                                    <span>$23.85</span>
-                                                    <span class="old-price">$25.8</span>
-                                                </div>
-                                                <div class="add-cart">
-                                                    <a class="add" href="shop-cart.html"><i
-                                                            class="fi-rs-shopping-cart mr-5"></i>Add </a>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <!--end product card-->
-                                <div class="col-6 col-lg-4 col-xl-3 col-xxl-2">
-                                    <div class="product-cart-wrap wow animate__animated animate__fadeIn"
-                                        data-wow-delay=".1s">
-                                        <div class="product-img-action-wrap">
-                                            <div class="product-img product-img-zoom">
-                                                <a href="#" tabindex="-1">
-                                                    <img class="default-img" src="assets/imgs/shop/product-6-1.jpg"
-                                                        alt="">
-                                                    <img class="hover-img" src="assets/imgs/shop/product-6-2.jpg"
-                                                        alt="">
-                                                </a>
-                                            </div>
-                                            <div class="product-action-1">
-                                                <a aria-label="Add To Wishlist" class="action-btn"
-                                                    href="shop-wishlist.html"><i class="fi-rs-heart"></i></a>
-                                                <a aria-label="Compare" class="action-btn" href="shop-compare.html"><i
-                                                        class="fi-rs-shuffle"></i></a>
-                                                <a aria-label="Quick view" class="action-btn" data-bs-toggle="modal"
-                                                    data-bs-target="#quickViewModal"><i class="fi-rs-eye"></i></a>
-                                            </div>
-                                        </div>
-                                        <div class="product-content-wrap">
-                                            <div class="product-category">
-                                                <a href="shop-grid-right.html">Gadgets</a>
-                                            </div>
-                                            <h2><a href="#">Chobani Complete Vanilla Greek Yogurt</a>
-                                            </h2>
-                                            <div class="product-rate-cover">
-                                                <div class="product-rate d-inline-block">
-                                                    <div class="product-rating" style="width: 90%"></div>
-                                                </div>
-                                                <span class="font-small ml-5 text-muted"> (4.0)</span>
-                                            </div>
-                                            <div>
-                                                <span class="font-small text-muted">By <a
-                                                        href="vendor-details-1.html">ShopX</a></span>
-                                            </div>
-                                            <div class="product-card-bottom">
-                                                <div class="product-price">
-                                                    <span>$54.85</span>
-                                                    <span class="old-price">$55.8</span>
-                                                </div>
-                                                <div class="add-cart">
-                                                    <a class="add" href="shop-cart.html"><i
-                                                            class="fi-rs-shopping-cart mr-5"></i>Add </a>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <!--end product card-->
+                                @endforelse
                             </div>
                         </div>
                     </div>
@@ -799,3 +398,186 @@
         </div>
     </div>
 @endsection
+
+@push('scripts')
+    <script>
+        $(function() {
+            var $productDetail = $('#product-detail');
+            if (!$productDetail.length) {
+                return;
+            }
+
+            var variantsData = [];
+            try {
+                variantsData = JSON.parse($('#variants-data').text());
+            } catch (error) {
+                variantsData = [];
+            }
+
+            var currencySymbol = $productDetail.data('currency-symbol') || '$';
+            var $price = $productDetail.find('#product-price');
+            var $stock = $productDetail.find('#product-stock');
+            var $stockStatus = $productDetail.find('#product-stock-status');
+            var $sku = $productDetail.find('#product-sku');
+            var $quantity = $productDetail.find('#product-quantity');
+            var $addToCart = $productDetail.find('#add-to-cart-button');
+
+            function formatPrice(value) {
+                return currencySymbol + Number(value).toFixed(2);
+            }
+
+            function selectedValueIds() {
+                return $productDetail.find('.attribute-option.active')
+                    .map(function() {
+                        return parseInt($(this).attr('data-value'), 10);
+                    })
+                    .get()
+                    .sort(function(a, b) {
+                        return a - b;
+                    });
+            }
+
+            function findVariant(selectedIds) {
+                return variantsData.find(function(variant) {
+                    var variantIds = variant.attribute_values.slice().sort(function(a, b) {
+                        return a - b;
+                    });
+
+                    return selectedIds.length === variantIds.length && selectedIds.every(function(id,
+                        index) {
+                        return id === variantIds[index];
+                    });
+                }) || null;
+            }
+
+            function disableActions() {
+                $quantity.prop('disabled', true).removeAttr('max');
+                $addToCart.prop('disabled', true).attr('aria-disabled', 'true');
+            }
+
+            function enableQuantityForVariant(variant) {
+                $quantity.prop('disabled', false);
+                if (variant.manage_stock && Number(variant.stock_quantity) > 0) {
+                    $quantity.attr('max', Number(variant.stock_quantity));
+                } else {
+                    $quantity.removeAttr('max');
+                }
+                $addToCart.prop('disabled', true).attr('aria-disabled', 'true');
+            }
+
+            function renderVariant(variant) {
+                $sku.text(variant.sku || 'N/A');
+
+                if (variant.effective_price === null || variant.effective_price === undefined) {
+                    $price.html('<span class="current-price text-muted">Precio no disponible</span>');
+                } else if (variant.has_active_special) {
+                    $price.html(
+                        '<span class="current-price text-brand">' + formatPrice(variant.effective_price) +
+                        '</span>' +
+                        '<span class="old-price font-md ml-5">' + formatPrice(variant.regular_price) + '</span>'
+                    );
+                } else {
+                    $price.html(
+                        '<span class="current-price text-brand">' + formatPrice(variant.effective_price) +
+                        '</span>'
+                    );
+                }
+
+                if (variant.can_purchase && variant.in_stock) {
+                    $stockStatus.text('In stock');
+                    if (variant.manage_stock && Number(variant.stock_quantity) > 0) {
+                        $stock.text(Number(variant.stock_quantity) + ' in stock');
+                    } else {
+                        $stock.text('In stock');
+                    }
+                    enableQuantityForVariant(variant);
+                } else {
+                    $stockStatus.text('Agotado');
+                    $stock.text('Agotado');
+                    disableActions();
+                }
+            }
+
+            function renderUnavailable() {
+                $sku.text('N/A');
+                $price.html('<span class="current-price text-muted">Combinación no disponible</span>');
+                $stockStatus.text('Combinación no disponible');
+                $stock.text('Combinación no disponible');
+                disableActions();
+            }
+
+            function update() {
+                if (variantsData.length === 0) {
+                    if ($productDetail.data('can-purchase') === false) {
+                        disableActions();
+                    } else {
+                        $quantity.prop('disabled', false);
+                        $addToCart.prop('disabled', true).attr('aria-disabled', 'true');
+                    }
+                    return;
+                }
+
+                var variant = findVariant(selectedValueIds());
+                if (variant) {
+                    renderVariant(variant);
+                } else {
+                    renderUnavailable();
+                }
+            }
+
+            function selectDefaultVariant() {
+                var defaultVariant = variantsData.find(function(variant) {
+                    return variant.is_default === true;
+                }) || variantsData[0] || null;
+
+                if (!defaultVariant) {
+                    update();
+                    return;
+                }
+
+                defaultVariant.attribute_values.forEach(function(valueId) {
+                    $productDetail.find('.attribute-option[data-value="' + valueId + '"]')
+                        .addClass('active')
+                        .attr('aria-pressed', 'true');
+                });
+                update();
+            }
+
+            $productDetail.find('.attribute-option').on('click', function() {
+                var $option = $(this);
+                var $group = $option.closest('.attribute-group');
+
+                $group.find('.attribute-option')
+                    .removeClass('active')
+                    .attr('aria-pressed', 'false');
+                $option.addClass('active').attr('aria-pressed', 'true');
+
+                update();
+            });
+
+            $productDetail.find('.qty-down').on('click', function(event) {
+                event.preventDefault();
+                var current = parseInt($quantity.val(), 10);
+                if (isNaN(current)) {
+                    current = 1;
+                }
+                var value = Math.max(1, current - 1);
+                $quantity.val(value).trigger('change');
+            });
+
+            $productDetail.find('.qty-up').on('click', function(event) {
+                event.preventDefault();
+                var current = parseInt($quantity.val(), 10);
+                if (isNaN(current)) {
+                    current = 1;
+                }
+                var max = $quantity.attr('max');
+                var next = current + 1;
+                $quantity.val(max === undefined ? next : Math.min(parseInt(max, 10), next)).trigger(
+                    'change');
+            });
+
+            selectDefaultVariant();
+        });
+    </script>
+@endpush

@@ -1,0 +1,119 @@
+resources/views/frontend/pages/show.blade.php:17:                <div class="product-detail accordion-detail">
+resources/views/frontend/pages/show.blade.php:23:                                <div class="product-image-slider">
+resources/views/frontend/pages/show.blade.php:24:                                    @foreach ($product->images as $image)
+resources/views/frontend/pages/show.blade.php:33:                                    @foreach ($product->images as $image)
+resources/views/frontend/pages/show.blade.php:43:                                <h2 class="title-detail">{{ $product->name }}</h2>
+resources/views/frontend/pages/show.blade.php:44:                                <div class="product-detail-rating">
+resources/views/frontend/pages/show.blade.php:45:                                    <div class="product-rate-cover text-end">
+resources/views/frontend/pages/show.blade.php:46:                                        <div class="product-rate d-inline-block">
+resources/views/frontend/pages/show.blade.php:47:                                            <div class="product-rating" style="width: 90%"></div>
+resources/views/frontend/pages/show.blade.php:53:                                    $regularPrice = $product->primaryVariant?->price ?? $product->price;
+resources/views/frontend/pages/show.blade.php:54:                                    $specialPrice = $product->primaryVariant?->special_price ?? $product->special_price;
+resources/views/frontend/pages/show.blade.php:57:                                <div class="clearfix product-price-cover">
+resources/views/frontend/pages/show.blade.php:58:                                    <div class="product-price primary-color float-left">
+resources/views/frontend/pages/show.blade.php:75:                                @foreach ($product->attributeWithValues as $attribute)
+resources/views/frontend/pages/show.blade.php:95:                                        $product->variants->map(function ($variant) {
+resources/views/frontend/pages/show.blade.php:125:                                    <div class="product-extra-link2">
+resources/views/frontend/pages/show.blade.php:143:                                            @foreach ($product->tags as $tag)
+resources/views/frontend/pages/show.blade.php:149:                                                    @if ($product->manage_stock == 1)
+resources/views/frontend/pages/show.blade.php:150:                                                        {{ $product->qty }}
+resources/views/frontend/pages/show.blade.php:163:                    <div class="product-info">
+resources/views/frontend/pages/show.blade.php:286:                                            <div class="product-rate-cover text-end">
+resources/views/frontend/pages/show.blade.php:287:                                                <div class="product-rate d-inline-block">
+resources/views/frontend/pages/show.blade.php:288:                                                    <div class="product-rating" style="width: 90%"></div>
+resources/views/frontend/pages/show.blade.php:343:                                                                    <div class="product-rate d-inline-block">
+resources/views/frontend/pages/show.blade.php:344:                                                                        <div class="product-rating" style="width: 100%">
+resources/views/frontend/pages/show.blade.php:371:                                                                    <div class="product-rate d-inline-block">
+resources/views/frontend/pages/show.blade.php:372:                                                                        <div class="product-rating" style="width: 80%">
+resources/views/frontend/pages/show.blade.php:399:                                                                    <div class="product-rate d-inline-block">
+resources/views/frontend/pages/show.blade.php:400:                                                                        <div class="product-rating" style="width: 80%">
+resources/views/frontend/pages/show.blade.php:419:                                                    <div class="product-rate d-inline-block mr-15">
+resources/views/frontend/pages/show.blade.php:420:                                                        <div class="product-rating" style="width: 90%"></div>
+resources/views/frontend/pages/show.blade.php:462:                                        <div class="product-rate d-inline-block mb-30"></div>
+resources/views/frontend/pages/show.blade.php:511:                                    <div class="product-cart-wrap mb-30 wow animate__animated animate__fadeIn"
+resources/views/frontend/pages/show.blade.php:513:                                        <div class="product-img-action-wrap">
+resources/views/frontend/pages/show.blade.php:514:                                            <div class="product-img product-img-zoom">
+resources/views/frontend/pages/show.blade.php:516:                                                    <img class="default-img" src="assets/imgs/shop/product-1-1.jpg"
+resources/views/frontend/pages/show.blade.php:518:                                                    <img class="hover-img" src="assets/imgs/shop/product-1-2.jpg"
+resources/views/frontend/pages/show.blade.php:522:                                            <div class="product-action-1">
+resources/views/frontend/pages/show.blade.php:530:                                            <div class="product-badges product-badges-position product-badges-mrg">
+resources/views/frontend/pages/show.blade.php:534:                                        <div class="product-content-wrap">
+resources/views/frontend/pages/show.blade.php:535:                                            <div class="product-category">
+resources/views/frontend/pages/show.blade.php:540:                                            <div class="product-rate-cover">
+resources/views/frontend/pages/show.blade.php:541:                                                <div class="product-rate d-inline-block">
+resources/views/frontend/pages/show.blade.php:542:                                                    <div class="product-rating" style="width: 90%"></div>
+resources/views/frontend/pages/show.blade.php:550:                                            <div class="product-card-bottom">
+resources/views/frontend/pages/show.blade.php:551:                                                <div class="product-price">
+resources/views/frontend/pages/show.blade.php:565:                                    <div class="product-cart-wrap mb-30 wow animate__animated animate__fadeIn"
+resources/views/frontend/pages/show.blade.php:567:                                        <div class="product-img-action-wrap">
+resources/views/frontend/pages/show.blade.php:568:                                            <div class="product-img product-img-zoom">
+resources/views/frontend/pages/show.blade.php:570:                                                    <img class="default-img" src="assets/imgs/shop/product-2-1.jpg"
+resources/views/frontend/pages/show.blade.php:572:                                                    <img class="hover-img" src="assets/imgs/shop/product-2-2.jpg"
+resources/views/frontend/pages/show.blade.php:576:                                            <div class="product-action-1">
+resources/views/frontend/pages/show.blade.php:584:                                            <div class="product-badges product-badges-position product-badges-mrg">
+resources/views/frontend/pages/show.blade.php:588:                                        <div class="product-content-wrap">
+resources/views/frontend/pages/show.blade.php:589:                                            <div class="product-category">
+resources/views/frontend/pages/show.blade.php:594:                                            <div class="product-rate-cover">
+resources/views/frontend/pages/show.blade.php:595:                                                <div class="product-rate d-inline-block">
+resources/views/frontend/pages/show.blade.php:596:                                                    <div class="product-rating" style="width: 80%"></div>
+resources/views/frontend/pages/show.blade.php:604:                                            <div class="product-card-bottom">
+resources/views/frontend/pages/show.blade.php:605:                                                <div class="product-price">
+resources/views/frontend/pages/show.blade.php:619:                                    <div class="product-cart-wrap mb-30 wow animate__animated animate__fadeIn"
+resources/views/frontend/pages/show.blade.php:621:                                        <div class="product-img-action-wrap">
+resources/views/frontend/pages/show.blade.php:622:                                            <div class="product-img product-img-zoom">
+resources/views/frontend/pages/show.blade.php:624:                                                    <img class="default-img" src="assets/imgs/shop/product-3-1.jpg"
+resources/views/frontend/pages/show.blade.php:626:                                                    <img class="hover-img" src="assets/imgs/shop/product-3-2.jpg"
+resources/views/frontend/pages/show.blade.php:630:                                            <div class="product-action-1">
+resources/views/frontend/pages/show.blade.php:638:                                            <div class="product-badges product-badges-position product-badges-mrg">
+resources/views/frontend/pages/show.blade.php:642:                                        <div class="product-content-wrap">
+resources/views/frontend/pages/show.blade.php:643:                                            <div class="product-category">
+resources/views/frontend/pages/show.blade.php:648:                                            <div class="product-rate-cover">
+resources/views/frontend/pages/show.blade.php:649:                                                <div class="product-rate d-inline-block">
+resources/views/frontend/pages/show.blade.php:650:                                                    <div class="product-rating" style="width: 85%"></div>
+resources/views/frontend/pages/show.blade.php:658:                                            <div class="product-card-bottom">
+resources/views/frontend/pages/show.blade.php:659:                                                <div class="product-price">
+resources/views/frontend/pages/show.blade.php:673:                                    <div class="product-cart-wrap mb-30 wow animate__animated animate__fadeIn"
+resources/views/frontend/pages/show.blade.php:675:                                        <div class="product-img-action-wrap">
+resources/views/frontend/pages/show.blade.php:676:                                            <div class="product-img product-img-zoom">
+resources/views/frontend/pages/show.blade.php:678:                                                    <img class="default-img" src="assets/imgs/shop/product-4-1.jpg"
+resources/views/frontend/pages/show.blade.php:680:                                                    <img class="hover-img" src="assets/imgs/shop/product-4-2.jpg"
+resources/views/frontend/pages/show.blade.php:684:                                            <div class="product-action-1">
+resources/views/frontend/pages/show.blade.php:693:                                        <div class="product-content-wrap">
+resources/views/frontend/pages/show.blade.php:694:                                            <div class="product-category">
+resources/views/frontend/pages/show.blade.php:699:                                            <div class="product-rate-cover">
+resources/views/frontend/pages/show.blade.php:700:                                                <div class="product-rate d-inline-block">
+resources/views/frontend/pages/show.blade.php:701:                                                    <div class="product-rating" style="width: 90%"></div>
+resources/views/frontend/pages/show.blade.php:709:                                            <div class="product-card-bottom">
+resources/views/frontend/pages/show.blade.php:710:                                                <div class="product-price">
+resources/views/frontend/pages/show.blade.php:724:                                    <div class="product-cart-wrap mb-30 wow animate__animated animate__fadeIn"
+resources/views/frontend/pages/show.blade.php:726:                                        <div class="product-img-action-wrap">
+resources/views/frontend/pages/show.blade.php:727:                                            <div class="product-img product-img-zoom">
+resources/views/frontend/pages/show.blade.php:729:                                                    <img class="default-img" src="assets/imgs/shop/product-5-1.jpg"
+resources/views/frontend/pages/show.blade.php:731:                                                    <img class="hover-img" src="assets/imgs/shop/product-5-2.jpg"
+resources/views/frontend/pages/show.blade.php:735:                                            <div class="product-action-1">
+resources/views/frontend/pages/show.blade.php:743:                                            <div class="product-badges product-badges-position product-badges-mrg">
+resources/views/frontend/pages/show.blade.php:747:                                        <div class="product-content-wrap">
+resources/views/frontend/pages/show.blade.php:748:                                            <div class="product-category">
+resources/views/frontend/pages/show.blade.php:753:                                            <div class="product-rate-cover">
+resources/views/frontend/pages/show.blade.php:754:                                                <div class="product-rate d-inline-block">
+resources/views/frontend/pages/show.blade.php:755:                                                    <div class="product-rating" style="width: 90%"></div>
+resources/views/frontend/pages/show.blade.php:763:                                            <div class="product-card-bottom">
+resources/views/frontend/pages/show.blade.php:764:                                                <div class="product-price">
+resources/views/frontend/pages/show.blade.php:778:                                    <div class="product-cart-wrap wow animate__animated animate__fadeIn"
+resources/views/frontend/pages/show.blade.php:780:                                        <div class="product-img-action-wrap">
+resources/views/frontend/pages/show.blade.php:781:                                            <div class="product-img product-img-zoom">
+resources/views/frontend/pages/show.blade.php:783:                                                    <img class="default-img" src="assets/imgs/shop/product-6-1.jpg"
+resources/views/frontend/pages/show.blade.php:785:                                                    <img class="hover-img" src="assets/imgs/shop/product-6-2.jpg"
+resources/views/frontend/pages/show.blade.php:789:                                            <div class="product-action-1">
+resources/views/frontend/pages/show.blade.php:798:                                        <div class="product-content-wrap">
+resources/views/frontend/pages/show.blade.php:799:                                            <div class="product-category">
+resources/views/frontend/pages/show.blade.php:804:                                            <div class="product-rate-cover">
+resources/views/frontend/pages/show.blade.php:805:                                                <div class="product-rate d-inline-block">
+resources/views/frontend/pages/show.blade.php:806:                                                    <div class="product-rating" style="width: 90%"></div>
+resources/views/frontend/pages/show.blade.php:814:                                            <div class="product-card-bottom">
+resources/views/frontend/pages/show.blade.php:815:                                                <div class="product-price">
+resources/views/frontend/pages/show.blade.php:887:                        <div class="product-price primary-color float-left">
+resources/views/frontend/pages/show.blade.php:893:                        $('.product-price').replaceWith(html);
+resources/views/frontend/pages/show.blade.php:899:                        <div class="product-price primary-color float-left">
+resources/views/frontend/pages/show.blade.php:908:                        <div class="product-price primary-color float-left">
+resources/views/frontend/pages/show.blade.php:914:                    $('.product-price').replaceWith(html);
