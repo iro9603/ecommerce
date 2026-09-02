@@ -56,7 +56,6 @@
     <script src="{{ asset('assets/frontend/dist/js/vendor/jquery-3.6.0.min.js') }}"></script>
     <script src="{{ asset('assets/frontend/dist/js/vendor/jquery-migrate-3.3.0.min.js') }}"></script>
     <script src="{{ asset('assets/frontend/dist/js/vendor/bootstrap.bundle.min.js') }}"></script>
-
     <script src="{{ asset('assets/frontend/dist/js/plugins/slick.js') }}"></script>
     <script src="{{ asset('assets/frontend/dist/js/plugins/jquery.syotimer.min.js') }}"></script>
     <script src="{{ asset('assets/frontend/dist/js/plugins/waypoints.js') }}"></script>
