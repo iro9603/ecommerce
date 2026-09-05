@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Frontend\CartController;
 use App\Http\Controllers\Frontend\HomeController;
 use App\Http\Controllers\Frontend\KycController;
 use App\Http\Controllers\Frontend\ProductPageController;
@@ -23,6 +24,10 @@ Route::get('/products/{slug}', [ProductPageController::class, 'show'])
 Route::get('/product-media/{image}', ProductMediaController::class)
     ->whereNumber('image')
     ->name('product-media.show');
+
+/** Cart routes */
+Route::get('/cart', [CartController::class, 'index'])->name('cart.index');
+Route::post('/add-to-cart', [CartController::class, 'addToCart'])->name('cart.add');
 
 Route::group(['middleware' => ['auth', 'verified']], function () {
 

@@ -6,26 +6,20 @@ use App\Http\Controllers\Controller;
 use App\Models\Product;
 use App\Services\ProductContentSanitizer;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\Request;
 
-class ProductPageController extends Controller
+class CartController extends Controller
 {
-    public function index(): View
+    function index(): View
     {
-        $products = Product::query()
-            ->published()
-            ->with(['primaryImage', 'primaryVariant', 'store', 'images' => function ($query) {
-                $query->limit(2);
-            }])
-            ->latest()
-            ->paginate(24);
-        return view('frontend.pages.index', compact('products'));
+        return view('frontend.pages.cart');
     }
 
-    public function show(string $slug, ProductContentSanitizer $contentSanitizer): View
+    function addToCart(Request $request, ProductContentSanitizer $contentSanitizer)
     {
         $product = Product::query()
             ->published()
-            ->where('slug', $slug)
+            ->where('id', $request->product_id)
             ->with([
                 'images:id,path,product_id,order',
                 'store',
@@ -69,8 +63,7 @@ class ProductPageController extends Controller
             ->latest('id')
             ->limit(6)
             ->get();
-
-        return view('frontend.pages.show', compact(
+        $modal = view('components.frontend.product-quick-view-modal', compact(
             'product',
             'safeShortDescriptionHtml',
             'safeDescriptionHtml',
@@ -79,6 +72,11 @@ class ProductPageController extends Controller
             'defaultVariant',
             'pricing',
             'relatedProducts',
-        ));
+        ))->render();
+
+        return response()->json([
+            'status' => 'success',
+            'modal' => $modal
+        ]);
     }
 }

@@ -112,3 +112,60 @@
         </div>
     </section> --}}
 @endsection
+
+@push('scripts')
+    <script>
+        $(function() {
+            let quickViewTrigger = null;
+
+            $(document).on('click', '.action-btn[data-bs-target="#quickViewModal"], .add_to-cart', function() {
+                quickViewTrigger = this;
+            });
+
+            $('#quickViewModal').on('hide.bs.modal', function() {
+                if (quickViewTrigger) {
+                    $(quickViewTrigger).focus();
+                }
+
+                // Seguridad adicional: si el foco sigue dentro del modal, sácalo.
+                if (document.activeElement && this.contains(document.activeElement)) {
+                    document.activeElement.blur();
+                }
+            });
+
+            $('#quickViewModal').on('hidden.bs.modal', function() {
+                quickViewTrigger = null;
+            });
+            $('.add_to-cart').on('click', function(e) {
+                e.preventDefault();
+                const productId = $(this).data('id');
+                /* $('#quickViewModal').modal('show'); */
+                $.ajax({
+                    url: "{{ route('cart.add') }}",
+                    method: "POST",
+                    data: {
+                        _token: "{{ csrf_token() }}",
+                        product_id: productId
+                    },
+                    beforeSend: function() {
+
+                    },
+                    success: function(response) {
+                        if (response.status == 'success') {
+                            $('#quickViewModal').html(response.modal);
+                            $('#quickViewModal').modal('show');
+                        }
+                    },
+                    error: function(error) {
+                        console.log(error);
+                    },
+                    complete: function() {
+
+                    }
+                });
+            });
+
+
+        })
+    </script>
+@endpush
