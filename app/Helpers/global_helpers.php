@@ -23,7 +23,7 @@ if (!function_exists('hasPermission')) {
 }
 
 if (!function_exists('user')) {
-    function user(): User
+    function user(): User | null
     {
         return Auth::user('web');
     }

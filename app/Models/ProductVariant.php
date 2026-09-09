@@ -90,11 +90,15 @@ class ProductVariant extends Model
 
     public function inStock(): bool
     {
+        if (! (bool) $this->in_stock) {
+            return false;
+        }
+
         if ($this->managesStock()) {
             return $this->stockQuantity() > 0;
         }
 
-        return (bool) $this->in_stock;
+        return true;
     }
 
     public function canPurchase(?Carbon $now = null): bool

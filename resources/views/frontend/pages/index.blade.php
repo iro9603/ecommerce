@@ -112,9 +112,15 @@
         </div>
     </section> --}}
 @endsection
-
+@push('styles')
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/notyf@3/notyf.min.css">
+@endpush
 @push('scripts')
+    <script src="https://cdn.jsdelivr.net/npm/notyf@3/notyf.min.js"></script>
     <script>
+        const notyf = new Notyf({
+            duration: 3000
+        });
         $(function() {
             let quickViewTrigger = null;
 
@@ -138,6 +144,7 @@
             });
             $('.add_to-cart').on('click', function(e) {
                 e.preventDefault();
+                var self = $(this);
                 const productId = $(this).data('id');
                 /* $('#quickViewModal').modal('show'); */
                 $.ajax({
@@ -148,23 +155,80 @@
                         product_id: productId
                     },
                     beforeSend: function() {
-
+                        self.html(
+                            '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>'
+                        );
                     },
                     success: function(response) {
-                        if (response.status == 'success') {
+                        if (response.status == 'success' && response.has_variant) {
                             $('#quickViewModal').html(response.modal);
                             $('#quickViewModal').modal('show');
+
+                        }
+
+                        if (response.status == "success" && !response.has_variant) {
+                            notyf.success(response.message);
                         }
                     },
                     error: function(error) {
                         console.log(error);
+
+                        let errors = error.responseJSON.errors;
+                        $.each(errors, function(key, value) {
+                            notyf.error(errors[key][0]);
+                        });
                     },
                     complete: function() {
-
+                        self.html('<i class = "fi-rs-shopping-cart mr-5" ></i>Add');
                     }
                 });
             });
+            $(document).on('click', '.modal-add-to-cart', function(e) {
+                e.preventDefault();
 
+                var self = $(this);
+                const productId = $(this).data('id');
+                const variantId = $('#selected-variant').val();
+                const quantity = $('#product-quantity').val();
+
+                $.ajax({
+                    url: "{{ route('cart.add') }}",
+                    method: "POST",
+                    data: {
+                        _token: "{{ csrf_token() }}",
+                        product_id: productId,
+                        variant_id: variantId || null,
+                        quantity: quantity || 1,
+                    },
+                    beforeSend: function() {
+                        self.html(
+                            '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>'
+                        );
+                    },
+                    success: function(response) {
+                        if (response.status === "success" && response.modal) {
+                            $('#quickViewModal').html(response.modal);
+                            $('#quickViewModal').modal('show');
+                        }
+
+                        if (response.status === "success" && response.message) {
+                            notyf.success(response.message);
+                        }
+                    },
+                    error: function(error) {
+                        let errors = error.responseJSON?.errors;
+
+                        if (errors) {
+                            $.each(errors, function(key, messages) {
+                                notyf.error(messages[0]);
+                            });
+                        }
+                    },
+                    complete: function() {
+                        self.html('<i class="fi-rs-shopping-cart mr-5"></i>Add to cart');
+                    }
+                });
+            });
 
         })
     </script>

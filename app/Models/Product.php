@@ -307,11 +307,15 @@ class Product extends Model
             return (bool) $this->in_stock;
         }
 
+        if (! (bool) $this->in_stock) {
+            return false;
+        }
+
         if ($this->managesStock()) {
             return $this->stockQuantity() > 0;
         }
 
-        return (bool) $this->in_stock;
+        return true;
     }
 
     public function canPurchase(): bool

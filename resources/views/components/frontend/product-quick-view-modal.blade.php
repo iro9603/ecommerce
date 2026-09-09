@@ -488,6 +488,7 @@
     }
 </style>
 
+
 <div class="modal-dialog modal-dialog-centered modal-xl product-detail cart-product-modal" id="product-detail"
     data-currency-symbol="{{ $product->currencySymbol() }}"
     data-can-purchase="{{ $product->canPurchase() ? 'true' : 'false' }}" role="document">
@@ -533,8 +534,8 @@
 
                         @php
                             $currencySymbol = $product->currencySymbol();
-                            $regularPrice = $pricing['regular_price'];
-                            $effectivePrice = $pricing['effective_price'];
+                            $regularPrice = $pricing['regular_price'] ?? null;
+                            $effectivePrice = $pricing['effective_price'] ?? null;
                         @endphp
 
                         <div class="clearfix product-price-cover">
@@ -591,6 +592,8 @@
                             <p class="text-muted">No attributes available.</p>
                         @endforelse
 
+                        <input type="hidden" id="selected-variant" value="">
+
                         <script type="application/json" id="variants-data">@json($variantPayloads)</script>
 
                         <div class="detail-extralink mb-50" id="product-actions">
@@ -607,8 +610,8 @@
                                 </div>
                             </div>
                             <div class="product-extra-link2">
-                                <button type="button" class="button button-add-to-cart" id="add-to-cart-button"
-                                    disabled aria-disabled="true" title="Cart is not available yet">
+                                <button type="button" class="button button-add-to-cart modal-add-to-cart"
+                                    id="add-to-cart-button" data-id="{{ $product->id }}">
                                     <i class="fi-rs-shopping-cart"></i>Add to cart
                                 </button>
                             </div>
@@ -764,6 +767,7 @@
         var $sku = $productDetail.find('#product-sku');
         var $quantity = $productDetail.find('#product-quantity');
         var $addToCart = $productDetail.find('#add-to-cart-button');
+        var $selectedVariant = $('#selected-variant');
 
         function formatPrice(value) {
             return currencySymbol + Number(value).toFixed(2);
@@ -805,11 +809,19 @@
             } else {
                 $quantity.removeAttr('max');
             }
-            $addToCart.prop('disabled', true).attr('aria-disabled', 'true');
+            $addToCart.prop('disabled', false).removeAttr('aria-disabled');
         }
 
         function renderVariant(variant) {
             $sku.text(variant.sku || 'N/A');
+
+            if (!variant.can_purchase || !variant.in_stock) {
+                $price.html('<span class="current-price text-muted">Agotado</span>');
+                $stockStatus.text('Agotado');
+                $stock.text('Agotado');
+                disableActions();
+                return;
+            }
 
             if (variant.effective_price === null || variant.effective_price === undefined) {
                 $price.html('<span class="current-price text-muted">Precio no disponible</span>');
@@ -851,6 +863,8 @@
 
         function update() {
             if (variantsData.length === 0) {
+                $selectedVariant.val('');
+
                 if ($productDetail.data('can-purchase') === false) {
                     disableActions();
                 } else {
@@ -862,8 +876,10 @@
 
             var variant = findVariant(selectedValueIds());
             if (variant) {
+                $selectedVariant.val(variant.id);
                 renderVariant(variant);
             } else {
+                $selectedVariant.val('');
                 renderUnavailable();
             }
         }

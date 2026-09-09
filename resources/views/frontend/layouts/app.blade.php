@@ -33,9 +33,7 @@
     <!-- Quick view -->
     <div class="modal fade custom-modal" id="quickViewModal" tabindex="-1" aria-labelledby="quickViewModalLabel"
         aria-hidden="true">
-
     </div>
-
     <!--Start header-->
     @include('frontend.layouts.header')
     <!--End header-->

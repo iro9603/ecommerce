@@ -1,4 +1,3 @@
-<x-frontend.quick-view />
 <div class="col-6 col-xxl-3 col-lg-4 col-md-6 col-sm-6">
     <div class="product-cart-wrap mb-30">
         <div class="product-img-action-wrap">

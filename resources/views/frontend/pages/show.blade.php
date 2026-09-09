@@ -160,6 +160,7 @@
     </style>
 @endpush
 
+
 @section('contents')
     <x-frontend.breadcrumb :items="[
         [
@@ -274,7 +275,33 @@
                                     <p class="text-muted">No attributes available.</p>
                                 @endforelse
 
+                                @if ($product->primaryVariant)
+                                    <input type="hidden" name="variant_id" id="selected-variant" value="">
+                                @endif
+
                                 <script type="application/json" id="variants-data">@json($variantPayloads)</script>
+
+                                {{-- <div class="detail-extralink mb-50" id="product-actions">
+                                    <div class="detail-qty border radius">
+                                        <input type="number" name="quantity" id="product-quantity" class="qty-val"
+                                            value="1" min="1" aria-label="Quantity" />
+                                        <div class="qty-controls" aria-hidden="false">
+                                            <button type="button" class="qty-up" aria-label="Increase quantity">
+                                                <i class="fi-rs-angle-small-up"></i>
+                                            </button>
+                                            <button type="button" class="qty-down" aria-label="Decrease quantity">
+                                                <i class="fi-rs-angle-small-down"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="product-extra-link2">
+                                        <button type="button" data-id = "{{ $product->id }}"
+                                            class="button button-add-to-cart modal-add-to-cart" id="add-to-cart-button"
+                                            disabled aria-disabled="true" title="Cart is not available yet">
+                                            <i class="fi-rs-shopping-cart"></i>Add to cart
+                                        </button>
+                                    </div>
+                                </div> --}}
 
                                 <div class="detail-extralink mb-50" id="product-actions">
                                     <div class="detail-qty border radius">
@@ -290,8 +317,8 @@
                                         </div>
                                     </div>
                                     <div class="product-extra-link2">
-                                        <button type="button" class="button button-add-to-cart" id="add-to-cart-button"
-                                            disabled aria-disabled="true" title="Cart is not available yet">
+                                        <button type="button" class="button button-add-to-cart modal-add-to-cart"
+                                            id="add-to-cart-button" data-id="{{ $product->id }}">
                                             <i class="fi-rs-shopping-cart"></i>Add to cart
                                         </button>
                                     </div>
@@ -399,7 +426,12 @@
     </div>
 @endsection
 
+@push('styles')
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/notyf@3/notyf.min.css">
+@endpush
+
 @push('scripts')
+    <script src="https://cdn.jsdelivr.net/npm/notyf@3/notyf.min.js"></script>
     <script>
         $(function() {
             var $productDetail = $('#product-detail');
@@ -578,6 +610,53 @@
             });
 
             selectDefaultVariant();
+
+            $(document).on('click', '.modal-add-to-cart', function(e) {
+                e.preventDefault();
+
+                var self = $(this);
+                const productId = $(this).data('id');
+                const variantId = $('#selected-variant').val();
+                const quantity = $('#product-quantity').val();
+
+                $.ajax({
+                    url: "{{ route('cart.add') }}",
+                    method: "POST",
+                    data: {
+                        _token: "{{ csrf_token() }}",
+                        product_id: productId,
+                        variant_id: variantId || null,
+                        quantity: quantity || 1,
+                    },
+                    beforeSend: function() {
+                        self.html(
+                            '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>'
+                        );
+                    },
+                    success: function(response) {
+                        if (response.status === "success" && response.modal) {
+                            $('#quickViewModal').html(response.modal);
+                            $('#quickViewModal').modal('show');
+                        }
+
+                        if (response.status === "success" && response.message) {
+                            notyf.success(response.message);
+                        }
+                    },
+                    error: function(error) {
+                        let errors = error.responseJSON?.errors;
+
+                        if (errors) {
+                            $.each(errors, function(key, messages) {
+                                notyf.error(messages[0]);
+                            });
+                        }
+                    },
+                    complete: function() {
+                        self.html('<i class="fi-rs-shopping-cart mr-5"></i>Add to cart');
+                    }
+                });
+            });
         });
     </script>
 @endpush

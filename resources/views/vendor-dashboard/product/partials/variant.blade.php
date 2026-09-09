@@ -13,7 +13,7 @@
                 'bg-primary' => $variant->is_default,
                 'bg-secondary' => !$variant->is_default,
             ])>
-                {{ $variant->is_default ? 'Default' : 'Default' }}
+                {{ $variant->is_default ? 'Default' : 'Not default' }}
             </span>
             <div class="accordion-button-toggle">
                 <!-- Download SVG icon from http://tabler.io/icons/icon/chevron-down -->

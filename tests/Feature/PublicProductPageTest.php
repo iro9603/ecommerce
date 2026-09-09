@@ -168,10 +168,37 @@ test('simple physical product stock follows the manage_stock contract', function
         'qty' => 0,
         'in_stock' => true,
     ]);
+    $explicitlyOut = PublicProductPageTestHelpers::publishedProduct([
+        'manage_stock' => 'yes',
+        'qty' => 5,
+        'in_stock' => false,
+    ]);
 
     expect($managed->canPurchase())->toBeTrue()
         ->and($unmanaged->canPurchase())->toBeTrue()
-        ->and($out->canPurchase())->toBeFalse();
+        ->and($out->canPurchase())->toBeFalse()
+        ->and($explicitlyOut->canPurchase())->toBeFalse();
+});
+
+test('managed variants respect an explicit out of stock status when quantity remains', function () {
+    $product = PublicProductPageTestHelpers::publishedProduct();
+    ['values' => $values] = PublicProductPageTestHelpers::attribute($product, 'Size', ['Small']);
+    $variant = PublicProductPageTestHelpers::variant($product, [$values[0]], [
+        'manage_stock' => true,
+        'qty' => 5,
+        'in_stock' => false,
+        'is_default' => true,
+    ]);
+
+    PublicProductPageTestHelpers::loadVariants($product);
+
+    $payload = collect($product->publicVariantPayloads())
+        ->firstWhere('id', $variant->getKey());
+
+    expect($variant->inStock())->toBeFalse()
+        ->and($variant->canPurchase())->toBeFalse()
+        ->and($payload['in_stock'])->toBeFalse()
+        ->and($payload['can_purchase'])->toBeFalse();
 });
 
 test('promotions are resolved by their start and end dates', function () {

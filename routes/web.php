@@ -41,6 +41,8 @@ Route::group(['middleware' => ['auth', 'verified']], function () {
     /** KYC Routes */
     Route::get('/kyc-verification', [KycController::class, 'index'])->name('kyc.index');
     Route::post('/kyc-verification', [KycController::class, 'store'])->name('kyc.store');
+
+    /** Add Cart Routes */
 });
 
 /** Vendor Routes */
